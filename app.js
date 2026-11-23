@@ -52,7 +52,7 @@
       var txt = '';
       if (wait) txt += '⏳ ' + wait + ' gasto' + (wait > 1 ? 's' : '') + ' guardado' + (wait > 1 ? 's' : '') + ' en el móvil, pendiente' + (wait > 1 ? 's' : '') + ' de enviar (se envían solos con cobertura).';
       if (failed.length) txt += (txt ? ' ' : '') + '⚠️ ' + failed.length + ' con error: ' + failed[0].failedMsg;
-      $('queueText').textContent = txt; $('queueDiscard').hidden = !failed.length; b.hidden = false;
+      $('queueText').textContent = txt; $('queueDiscard').hidden = !failed.length; $('queueForce').hidden = !failed.some(function (i) { return i.dupe; }); b.hidden = false;
     });
   }
 
@@ -71,6 +71,7 @@
   /* ---------- acceso ---------- */
   function startSession(pw, cfg, offline) {
     state.password = pw; state.config = cfg; state.offline = !!offline; loadPins();
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} // evita que el móvil borre la cola de pendientes
     initForm(); show('formView'); renderQueue(); flushQueue();
   }
   function doLogin(pw, remember, silent) {
@@ -260,7 +261,8 @@
     $('doneTitle').textContent = local ? 'Guardado en el móvil' : 'Gasto guardado';
     $('doneSummary').textContent = info.who + ' · ' + info.label + ' · ' + info.amount + ' €';
     var n = $('doneNote');
-    n.textContent = local ? 'No hay cobertura: se enviará automáticamente en cuanto la recuperes (mantén la app instalada o abierta una vez con señal).'
+    var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) && !(window.navigator.standalone);
+    n.textContent = local ? 'No hay cobertura: se enviará automáticamente en cuanto la recuperes (mantén la app instalada o abierta una vez con señal).' + (ios ? ' En iPhone, añade esta web a la pantalla de inicio (Compartir → Añadir a pantalla de inicio): si no, el móvil puede borrar los pendientes pasados unos días.' : '')
       : (info.sup ? 'Factura de proveedor registrada: queda pendiente de pago por el club.' : (reimb ? 'Queda pendiente de liquidar a ' + info.who + '.' : 'Gasto de tarjeta del club: registrado para el IVA, sin liquidación.'));
     n.hidden = false; show('doneView');
   }
@@ -280,9 +282,10 @@
       return items.filter(function (i) { return !i.failedMsg; }).reduce(function (p, it) {
         return p.then(function (stop) {
           if (stop) return true;
-          var body = Object.assign({}, it, { password: state.password, pin: state.pins[it.data.person] || '', force: true }); delete body.info; delete body.savedAt;
+          var body = Object.assign({}, it, { password: state.password, pin: state.pins[it.data.person] || '', force: !!it.forceSend }); delete body.info; delete body.savedAt; delete body.dupe; delete body.forceSend;
           return api(body).then(function (res) {
             if (res && res.ok) { sent++; return qDel(it.clientId).then(function () { return false; }); }
+            if (res && res.duplicate) { it.failedMsg = 'Posible duplicado (' + (res.message || 'ya hay un gasto igual') + ')'; it.dupe = true; return qPut(it).then(function () { return false; }); }
             if (res && res.pinError) { toast('PIN incorrecto o bloqueado: ábrelo en «Subir gasto» y vuelve a escribirlo para enviar los pendientes.'); return true; }
             if (res && /Clave incorrecta/.test(res.error || '')) { toast('La clave ha cambiado: vuelve a entrar para enviar los pendientes.'); return true; }
             it.failedMsg = (res && res.error) || 'Error'; return qPut(it).then(function () { return false; });
@@ -323,6 +326,7 @@
         if (body.password !== 'demo') return res({ ok: false, error: 'Clave incorrecta (modo demo: usa "demo")' });
         if (['pin', 'submit', 'mine'].indexOf(body.action) >= 0 && (body.action === 'submit' ? body.data.person : body.person) !== 'Tarjeta empresa' && body.pin !== '123456') return res({ ok: false, pinError: true, error: 'PIN incorrecto (modo demo: 123456)' });
         if (body.action === 'pin') return res({ ok: true, salary: body.person === 'Persona A' });
+        if (body.action === 'submit' && window.__mockDup && !body.force) return res({ ok: false, duplicate: true, message: 'Ya hay un gasto igual (demo).' });
         if (body.action === 'login') return res({ ok: true, config: {
           persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa', noPin: n === 'Tarjeta empresa' }; }),
           events: [{ id: 'e1', label: 'Evento de ejemplo 1', quarter: 1 }, { id: 'e2', label: 'Evento de ejemplo 2', quarter: 2 }, { id: 'general', label: 'Gastos generales (sin evento)', quarter: 0 }],
@@ -361,6 +365,9 @@
   $('againBtn').addEventListener('click', resetForAnother);
   $('queueRetry').addEventListener('click', function () {
     qAll().then(function (items) { return Promise.all(items.filter(function (i) { return i.failedMsg; }).map(function (i) { delete i.failedMsg; return qPut(i); })); }).then(function () { if (!navigator.onLine) toast('Aún no hay cobertura'); state.offline = false; return flushQueue(); });
+  });
+  $('queueForce').addEventListener('click', function () {
+    qAll().then(function (items) { return Promise.all(items.filter(function (i) { return i.dupe; }).map(function (i) { delete i.failedMsg; i.forceSend = true; return qPut(i); })); }).then(function () { if (navigator.onLine) flushQueue(); else renderQueue(); });
   });
   $('queueDiscard').addEventListener('click', function () { if (!window.confirm('¿Descartar los gastos con error? Se perderán.')) return; qAll().then(function (items) { return Promise.all(items.filter(function (i) { return i.failedMsg; }).map(function (i) { return qDel(i.clientId); })); }).then(renderQueue); });
   window.addEventListener('online', function () { state.offline = false; flushQueue(); });
