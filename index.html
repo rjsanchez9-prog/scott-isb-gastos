@@ -67,6 +67,7 @@
 
         <div class="card">
           <div class="step"><span class="num">3</span><label for="date">Fecha e importe</label></div>
+          <p class="muted small" style="margin:0 0 8px">Pon la <b>fecha que figura en la factura o ticket</b>, no la de hoy. Si juntas varios, súbelos uno a uno, cada uno con su fecha.</p>
           <div class="row">
             <div class="col">
               <span class="sub">Fecha de la factura</span>
@@ -131,7 +132,14 @@
 
         <div class="card">
           <div class="step"><span class="num">6</span><label>Factura o ticket</label></div>
-          <p class="muted small">Foto <b>nítida y completa</b>: que se lea proveedor, fecha, NIF e importe.</p>
+          <label for="docType">¿Qué has recibido?</label>
+          <select id="docType" required>
+            <option value="">Elige…</option>
+            <option>Factura completa</option>
+            <option>Ticket / factura simplificada</option>
+          </select>
+          <p class="muted small">Una <b>factura completa</b> lleva los datos fiscales de quien la emite (razón social y NIF). Un <b>ticket</b> solo trae establecimiento e importe.</p>
+          <p class="muted small" style="margin-top:12px">Foto <b>nítida y completa</b>: que se lea proveedor, fecha, NIF e importe.</p>
           <div class="row">
             <button type="button" id="btnCamera" class="btn ghost">📷 Hacer foto</button>
             <button type="button" id="btnGallery" class="btn ghost">🖼️ Galería / archivo</button>
@@ -142,18 +150,17 @@
           <p id="fileWarn" class="warn" hidden></p>
         </div>
 
-        <details class="card more">
-          <summary>Más datos (opcional, ayudan con el IVA)</summary>
-          <label for="supplier">Proveedor / establecimiento</label>
+        <details class="card more" id="more">
+          <summary id="moreSum">Más datos (opcional)</summary>
+          <label for="supplier" id="lblSupplier">Establecimiento (opcional)</label>
           <input id="supplier" type="text" placeholder="Ej. Repsol, Hotel Girona…" autocomplete="off">
-          <label for="docNumber">Nº de factura o ticket</label>
+          <div id="nifBox" hidden>
+            <label for="nif">NIF / CIF del emisor</label>
+            <input id="nif" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ej. B12345678 (o identificador extranjero con prefijo de país)">
+            <p id="nifStatus" class="muted small" style="margin-top:6px"></p>
+          </div>
+          <label for="docNumber" id="lblDocNumber">Nº de ticket (opcional)</label>
           <input id="docNumber" type="text" autocomplete="off">
-          <label for="docType">Tipo de documento</label>
-          <select id="docType">
-            <option value="">No sé</option>
-            <option>Factura completa</option>
-            <option>Ticket / factura simplificada</option>
-          </select>
           <label for="notes">Notas</label>
           <textarea id="notes" rows="2" placeholder="Algo que debamos saber…"></textarea>
         </details>
