@@ -148,11 +148,45 @@
     var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = irpfValue(), ic = $('irpfCalc'); $('irpfOther').hidden = $('irpfRate').value !== 'other';
     $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && state.salary);
     if (isHon() && !$('docType').value) { $('docType').value = 'Factura completa'; updateDoc(); }
-    ic.hidden = true;
-    if (!isNaN(a) && a > 0 && r !== '') {
+    ic.hidden = true; $('ivaMulti').hidden = r !== 'multi'; if (r === 'multi') updateMulti();
+    if (!isNaN(a) && a > 0 && r !== '' && r !== 'multi') {
       var base = a / (1 + Number(r) / 100); el.textContent = 'Base imponible ' + fmt(base) + ' € · IVA ' + fmt(a - base) + ' €'; el.hidden = false;
       if (isHon() && ir !== '') { var ret = Math.round(base * Number(ir)) / 100; ic.textContent = 'Retención ' + fmt(ret) + ' € · A transferir ' + fmt(a - ret) + ' €'; ic.hidden = false; }
     } else el.hidden = true;
+  }
+
+  /* ---------- varios tipos de IVA (supermercado…) ---------- */
+  var RATES = [21, 10, 4, 0];
+  function money(v) { var n = parseAmount(v); return isNaN(n) ? 0 : Math.round(n * 100) / 100; }
+  function breakdown() {
+    var rows = [];
+    RATES.forEach(function (rt) { var b = money($('mb' + rt).value), c = rt === 0 ? 0 : money($('mc' + rt).value); if (b > 0) rows.push({ r: rt, b: b, c: c }); });
+    return rows;
+  }
+  function updateMulti() {
+    RATES.forEach(function (rt) {
+      if (rt === 0) return;
+      var c = $('mc' + rt), b = money($('mb' + rt).value);
+      if (!c.dataset.manual) c.value = b > 0 ? (Math.round(b * rt) / 100).toFixed(2).replace('.', ',') : '';
+    });
+    var rows = breakdown(), base = 0, cuota = 0, a = parseAmount($('amount').value), el = $('multiSum');
+    rows.forEach(function (x) { base += x.b; cuota += x.c; });
+    var tot = Math.round((base + cuota) * 100) / 100;
+    if (!rows.length) { el.textContent = ''; el.className = 'small'; return; }
+    var ok = !isNaN(a) && Math.abs(tot - a) <= 0.02;
+    el.textContent = 'Suma del desglose: ' + fmt(tot) + ' € (base ' + fmt(base) + ' + IVA ' + fmt(cuota) + ')' + (isNaN(a) || a <= 0 ? '' : ok ? ' · ✔ cuadra con el importe' : ' · ✖ el importe es ' + fmt(a) + ' €: revisa los números');
+    el.className = 'small ' + (isNaN(a) || a <= 0 ? '' : ok ? 'msum-ok' : 'msum-bad');
+  }
+  function multiErrors(a) {
+    var rows = breakdown(), e = [], base = 0, cuota = 0;
+    if (isHon()) return ['Los honorarios profesionales llevan un único tipo de IVA'];
+    if (rows.length < 2) return ['Rellena la base de al menos dos tipos de IVA (si solo hay uno, elígelo en la lista)'];
+    rows.forEach(function (x) {
+      base += x.b; cuota += x.c;
+      if (Math.abs(x.c - x.b * x.r / 100) > 0.05) e.push('La cuota del ' + x.r + ' % no cuadra con su base (debería rondar ' + fmt(Math.round(x.b * x.r) / 100) + ' €)');
+    });
+    if (!e.length && !isNaN(a) && Math.abs(base + cuota - a) > 0.02) e.push('El desglose suma ' + fmt(base + cuota) + ' € y el importe es ' + fmt(a) + ' €');
+    return e;
   }
 
   /* ---------- fotos y archivos ---------- */
@@ -257,6 +291,7 @@
     if (isNaN(a) || a <= 0) err.push(['amount', 'Escribe el importe con IVA (mayor que 0)']);
     if (!$('concept').value) err.push(['concept', 'Elige el tipo de gasto']);
     if (!$('ivaRate').value) err.push(['ivaRate', 'Indica el tipo de IVA (mira la factura)']);
+    else if ($('ivaRate').value === 'multi') multiErrors(a).forEach(function (m) { err.push(['mb21', m]); });
     if (!$('inClub').value) err.push(['inClub', 'Indica si la factura está a nombre del club']);
     if (isHon() && irpfValue() === '') err.push([$('irpfRate').value === 'other' ? 'irpfOther' : 'irpfRate', 'Indica la retención de IRPF de la factura (0 si no lleva; entre 0 y 47 %)']);
     if (!$('docType').value) err.push(['docType', 'Indica si es factura completa o ticket']);
@@ -280,7 +315,7 @@
     var payload = {
       action: 'submit', clientId: state.clientId,
       data: { person: $('person').value, eventId: $('event').value, date: $('date').value, amount: Math.round(a * 100) / 100, concept: $('concept').value,
-        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), nif: $('docType').value === 'Factura completa' ? nifCheck($('nif').value).nif || '' : '', docType: $('docType').value, ivaRate: $('ivaRate').value, irpfRate: isHon() ? irpfValue() : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
+        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), nif: $('docType').value === 'Factura completa' ? nifCheck($('nif').value).nif || '' : '', docType: $('docType').value, ivaRate: $('ivaRate').value, ivaBreakdown: $('ivaRate').value === 'multi' ? breakdown() : undefined, irpfRate: isHon() ? irpfValue() : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
       files: state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; })
     };
     var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
@@ -314,7 +349,8 @@
   function resetForAnother() {
     state.files = []; state.clientId = ''; renderThumbs();
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
-    ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate', 'irpfOther'].forEach(function (i) { $(i).value = ''; });
+    ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate', 'irpfOther', 'mb21', 'mb10', 'mb4', 'mb0', 'mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).value = ''; if ($(i).dataset) delete $(i).dataset.manual; });
+    $('ivaMulti').hidden = true;
     $('nif').value = ''; $('concept').value = ''; $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; show('formView');
   }
 
@@ -400,6 +436,7 @@
   $('tabMine').addEventListener('click', function () { show('mineView'); loadMine(); });
   $('pin').addEventListener('change', verifyPin);
   $('person').addEventListener('change', onPersonChange);
+  ['mb21', 'mb10', 'mb4', 'mb0'].forEach(function (i) { $(i).addEventListener('input', updateMulti); }); ['mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).addEventListener('input', function () { $(i).dataset.manual = $(i).value.trim() ? '1' : ''; updateMulti(); }); });
   $('docType').addEventListener('change', updateDoc); $('nif').addEventListener('input', updateNif); $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva); $('irpfRate').addEventListener('change', updateIva); $('irpfOther').addEventListener('input', updateIva); $('concept').addEventListener('change', updateIva); $('person').addEventListener('change', updateIva);
   $('amount').addEventListener('blur', function () { var a = parseAmount(this.value); if (!isNaN(a) && a > 0) this.value = a.toFixed(2).replace('.', ','); updateIva(); });
   $('btnCamera').addEventListener('click', function () { $('fileCamera').click(); });

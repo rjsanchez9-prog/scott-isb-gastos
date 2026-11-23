@@ -101,6 +101,7 @@
                 <option value="10">10 %</option>
                 <option value="4">4 %</option>
                 <option value="0">Exento (0 %)</option>
+                <option value="multi">Varios tipos (supermercado…)</option>
               </select>
             </div>
             <div class="col">
@@ -113,6 +114,15 @@
             </div>
           </div>
           <p id="ivaCalc" class="muted small" hidden></p>
+          <div id="ivaMulti" hidden>
+            <p class="muted small" style="margin-top:10px">Copia del ticket o factura el <b>desglose de IVA</b>: la base y la cuota de cada tipo. Deja en blanco los tipos que no aparezcan.</p>
+            <div class="mrow mhead"><span></span><span>Base imponible</span><span>Cuota IVA</span></div>
+            <div class="mrow"><b>21 %</b><input id="mb21" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><input id="mc21" type="text" inputmode="decimal" autocomplete="off" placeholder="auto"></div>
+            <div class="mrow"><b>10 %</b><input id="mb10" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><input id="mc10" type="text" inputmode="decimal" autocomplete="off" placeholder="auto"></div>
+            <div class="mrow"><b>4 %</b><input id="mb4" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><input id="mc4" type="text" inputmode="decimal" autocomplete="off" placeholder="auto"></div>
+            <div class="mrow"><b>Exento</b><input id="mb0" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><span class="muted small" style="align-self:center">0,00</span></div>
+            <p id="multiSum" class="small" style="margin-top:8px"></p>
+          </div>
           <div id="irpfBox" hidden>
             <span class="sub">Retención de IRPF de la factura</span>
             <select id="irpfRate">
