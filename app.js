@@ -97,7 +97,7 @@
     p.innerHTML = ''; e.innerHTML = ''; k.innerHTML = ''; mp.innerHTML = '';
     p.appendChild(opt('', 'Selecciona tu nombre…'));
     var fw = $('forWhom'); fw.innerHTML = ''; fw.appendChild(opt('', 'Nadie en concreto'));
-    c.persons.forEach(function (x) { p.appendChild(opt(x.name, x.name, { reimb: x.reimbursable ? '1' : '0', sup: x.supplier ? '1' : '0' })); mp.appendChild(opt(x.name, x.name)); if (x.reimbursable && !x.supplier) fw.appendChild(opt(x.name, x.name)); });
+    c.persons.forEach(function (x) { p.appendChild(opt(x.name, x.name, { reimb: x.reimbursable ? '1' : '0', sup: x.supplier ? '1' : '0', nopin: x.noPin ? '1' : '0' })); mp.appendChild(opt(x.name, x.name)); if (x.reimbursable && !x.supplier) fw.appendChild(opt(x.name, x.name)); });
     e.appendChild(opt('', 'Selecciona el evento…'));
     var groups = {};
     c.events.forEach(function (x) { var q = x.quarter || 0; (groups[q] = groups[q] || []).push(x); });
@@ -111,13 +111,14 @@
     $('date').value = todayISO(); $('date').max = todayISO(); $('date').min = '2026-11-01';
     onPersonChange();
   }
+  function needsPin() { var o = $('person').options[$('person').selectedIndex]; return !!($('person').value && o && o.dataset.nopin !== '1'); }
   function onPersonChange() {
     var sel = $('person'), o = sel.options[sel.selectedIndex], n = $('personNote');
     if (o && o.dataset.sup === '1') { n.textContent = 'Factura de un proveedor (agencia de viajes, etc.) que pagará el club por transferencia: queda pendiente de pago hasta que se abone. Indica en "Más datos" para quién es.'; n.hidden = false; }
     else if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
     if (sel.value) { lsSet('gx.person', sel.value); $('minePerson').value = sel.value; }
-    $('pinBox').hidden = !sel.value; $('pin').value = sel.value ? (state.pins[sel.value] || '') : ''; state.salary = false; $('pinStatus').textContent = '';
-    if (sel.value && $('pin').value) verifyPin();
+    $('pinBox').hidden = !needsPin(); $('pin').value = needsPin() ? (state.pins[sel.value] || '') : ''; state.salary = false; $('pinStatus').textContent = '';
+    if (needsPin() && $('pin').value) verifyPin();
   }
   var HON = 'Honorarios profesionales';
   function isHon() { return $('concept').value === HON; }
@@ -206,7 +207,7 @@
   function validate() {
     var err = [], a = parseAmount($('amount').value);
     if (!$('person').value) err.push(['person', 'Elige la persona']);
-    if ($('person').value && !$('pin').value.trim()) err.push(['pin', 'Escribe tu PIN personal']);
+    if (needsPin() && !$('pin').value.trim()) err.push(['pin', 'Escribe tu PIN personal']);
     if (!$('event').value) err.push(['event', 'Elige el evento']);
     if (!$('date').value) err.push(['date', 'Indica la fecha de la factura']);
     if (isNaN(a) || a <= 0) err.push(['amount', 'Escribe el importe con IVA (mayor que 0)']);
@@ -234,12 +235,12 @@
     var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
     if (state.offline || !navigator.onLine) return saveLocal(payload, info);
     busy(true, 'Subiendo gasto… no cierres la página');
-    api(Object.assign({ password: state.password, pin: $('pin').value.trim(), force: state.force }, payload)).then(function (res) {
+    api(Object.assign({ password: state.password, pin: needsPin() ? $('pin').value.trim() : '', force: state.force }, payload)).then(function (res) {
       busy(false); state.force = false;
       if (res && res.pinError) { box.textContent = res.error; box.hidden = false; $('pinStatus').textContent = res.error; $('pin').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
       if (res && res.duplicate) { if (window.confirm(res.message + '\n\n¿Subirlo de todas formas?')) { state.force = true; submit(ev); } return; }
       if (!res || !res.ok) { box.textContent = (res && res.error) || 'No se pudo guardar. Inténtalo de nuevo.'; box.hidden = false; return; }
-      state.pins[payload.data.person] = $('pin').value.trim(); savePins(); state.clientId = ''; done(info, res.reimbursable !== false, false);
+      if (needsPin()) { state.pins[payload.data.person] = $('pin').value.trim(); savePins(); } state.clientId = ''; done(info, res.reimbursable !== false, false);
     }).catch(function (e) {
       busy(false);
       if (e && e.network) saveLocal(payload, info); else { box.textContent = 'Error: ' + (e && e.message); box.hidden = false; }
@@ -288,8 +289,8 @@
 
   /* ---------- Mis gastos ---------- */
   function loadMine() {
-    var person = $('person').value, pin = $('pin').value.trim(), body = $('mineBody');
-    if (!person || !pin) { body.innerHTML = '<p class="empty">Elige tu nombre y escribe tu PIN en «Subir gasto» para ver tus gastos.</p>'; return; }
+    var person = $('person').value, pin = needsPin() ? $('pin').value.trim() : '', body = $('mineBody');
+    if (!person || (needsPin() && !pin)) { body.innerHTML = '<p class="empty">Elige tu nombre y escribe tu PIN en «Subir gasto» para ver tus gastos.</p>'; return; }
     body.innerHTML = '<p class="empty">Cargando…</p>';
     Promise.all([api({ action: 'mine', password: state.password, person: person, pin: pin }).catch(function (e) { return { ok: false, error: e.message, network: true }; }), qAll()]).then(function (r) {
       var res = r[0], local = r[1].filter(function (i) { return i.data.person === person; });
@@ -315,10 +316,10 @@
       setTimeout(function () {
         if (window.__mockOffline) return rej(netError('Sin conexión'));
         if (body.password !== 'demo') return res({ ok: false, error: 'Clave incorrecta (modo demo: usa "demo")' });
-        if (['pin', 'submit', 'mine'].indexOf(body.action) >= 0 && body.pin !== '123456') return res({ ok: false, pinError: true, error: 'PIN incorrecto (modo demo: 123456)' });
+        if (['pin', 'submit', 'mine'].indexOf(body.action) >= 0 && (body.action === 'submit' ? body.data.person : body.person) !== 'Tarjeta empresa' && body.pin !== '123456') return res({ ok: false, pinError: true, error: 'PIN incorrecto (modo demo: 123456)' });
         if (body.action === 'pin') return res({ ok: true, salary: body.person === 'Persona A' });
         if (body.action === 'login') return res({ ok: true, config: {
-          persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa' }; }),
+          persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa', noPin: n === 'Tarjeta empresa' }; }),
           events: [{ id: 'e1', label: 'Evento de ejemplo 1', quarter: 1 }, { id: 'e2', label: 'Evento de ejemplo 2', quarter: 2 }, { id: 'general', label: 'Gastos generales (sin evento)', quarter: 0 }],
           concepts: ['Vuelos/Barco', 'Diésel', 'Peajes/Parking', 'Comida', 'Hotel/Apartamentos', 'Otros', 'Honorarios profesionales'] } });
         if (body.action === 'submit') {
