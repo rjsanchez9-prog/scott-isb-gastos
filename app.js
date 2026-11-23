@@ -94,7 +94,8 @@
     var c = state.config, p = $('person'), e = $('event'), k = $('concept'), mp = $('minePerson');
     p.innerHTML = ''; e.innerHTML = ''; k.innerHTML = ''; mp.innerHTML = '';
     p.appendChild(opt('', 'Selecciona tu nombre…'));
-    c.persons.forEach(function (x) { p.appendChild(opt(x.name, x.name, { reimb: x.reimbursable ? '1' : '0' })); mp.appendChild(opt(x.name, x.name)); });
+    var fw = $('forWhom'); fw.innerHTML = ''; fw.appendChild(opt('', 'Nadie en concreto'));
+    c.persons.forEach(function (x) { p.appendChild(opt(x.name, x.name, { reimb: x.reimbursable ? '1' : '0', sup: x.supplier ? '1' : '0' })); mp.appendChild(opt(x.name, x.name)); if (x.reimbursable && !x.supplier) fw.appendChild(opt(x.name, x.name)); });
     e.appendChild(opt('', 'Selecciona el evento…'));
     var groups = {};
     c.events.forEach(function (x) { var q = x.quarter || 0; (groups[q] = groups[q] || []).push(x); });
@@ -110,7 +111,8 @@
   }
   function onPersonChange() {
     var sel = $('person'), o = sel.options[sel.selectedIndex], n = $('personNote');
-    if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
+    if (o && o.dataset.sup === '1') { n.textContent = 'Factura de un proveedor (agencia de viajes, etc.) que pagará el club por transferencia: queda pendiente de pago hasta que se abone. Indica en "Más datos" para quién es.'; n.hidden = false; }
+    else if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
     if (sel.value) { lsSet('gx.person', sel.value); $('minePerson').value = sel.value; }
   }
   function updateIva() {
@@ -197,10 +199,10 @@
     var payload = {
       action: 'submit', clientId: state.clientId,
       data: { person: $('person').value, eventId: $('event').value, date: $('date').value, amount: Math.round(a * 100) / 100, concept: $('concept').value,
-        supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, inClub: $('inClub').value, notes: $('notes').value.trim() },
+        forWhom: $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, inClub: $('inClub').value, notes: $('notes').value.trim() },
       files: state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; })
     };
-    var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0' };
+    var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
     if (state.offline || !navigator.onLine) return saveLocal(payload, info);
     busy(true, 'Subiendo gasto… no cierres la página');
     api(Object.assign({ password: state.password, force: state.force }, payload)).then(function (res) {
@@ -223,13 +225,13 @@
     $('doneSummary').textContent = info.who + ' · ' + info.label + ' · ' + info.amount + ' €';
     var n = $('doneNote');
     n.textContent = local ? 'No hay cobertura: se enviará automáticamente en cuanto la recuperes (mantén la app instalada o abierta una vez con señal).'
-      : (reimb ? 'Queda pendiente de liquidar a ' + info.who + '.' : 'Gasto de tarjeta del club: registrado para el IVA, sin liquidación.');
+      : (info.sup ? 'Factura de proveedor registrada: queda pendiente de pago por el club.' : (reimb ? 'Queda pendiente de liquidar a ' + info.who + '.' : 'Gasto de tarjeta del club: registrado para el IVA, sin liquidación.'));
     n.hidden = false; show('doneView');
   }
   function resetForAnother() {
     state.files = []; state.clientId = ''; renderThumbs();
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
-    ['docType', 'ivaRate', 'inClub'].forEach(function (i) { $(i).value = ''; });
+    ['docType', 'ivaRate', 'inClub', 'forWhom'].forEach(function (i) { $(i).value = ''; });
     $('concept').value = ''; $('date').value = todayISO(); $('ivaCalc').hidden = true; $('formError').hidden = true; show('formView');
   }
 
@@ -262,7 +264,7 @@
       var res = r[0], local = r[1].filter(function (i) { return i.data.person === person; });
       var html = '';
       if (!res.ok) html += '<p class="warn">' + esc(res.network ? 'Sin conexión: no se puede consultar el servidor.' : res.error) + '</p>';
-      else if (res.reimbursable) html += '<div class="tiles"><div class="tile main full"><small>Pendiente de cobro</small><b>' + fmt(res.pending) + ' €</b></div><div class="tile"><small>Ya liquidado</small><b>' + fmt(res.paid) + ' €</b></div><div class="tile"><small>Total subido</small><b>' + fmt(res.total) + ' €</b></div></div>';
+      else if (res.reimbursable) html += '<div class="tiles"><div class="tile main full"><small>' + (res.supplier ? 'Pendiente de pago a proveedores' : 'Pendiente de cobro') + '</small><b>' + fmt(res.pending) + ' €</b></div><div class="tile"><small>Ya liquidado</small><b>' + fmt(res.paid) + ' €</b></div><div class="tile"><small>Total subido</small><b>' + fmt(res.total) + ' €</b></div></div>';
       else html += '<div class="tiles"><div class="tile main full"><small>Pagado con la tarjeta del club (no se liquida)</small><b>' + fmt(res.total) + ' €</b></div></div>';
       var items = [];
       local.forEach(function (i) { items.push('<li><span class="t">' + esc(i.info.label) + '</span><span class="a">' + fmt(i.data.amount) + ' €</span><span class="s">' + esc(i.data.concept) + ' · ' + esc(i.data.date) + '</span><span class="s" style="text-align:right"><span class="pill local">Sin enviar</span></span></li>'); });
