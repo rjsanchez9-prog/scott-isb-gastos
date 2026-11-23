@@ -76,6 +76,11 @@
         <div class="card">
           <div class="step"><span class="num">4</span><label for="concept">Concepto</label></div>
           <select id="concept" required></select>
+          <div id="forWhomBox" hidden>
+            <span class="sub">¿Es el gasto de otra persona? (opcional)</span>
+            <select id="forWhom"></select>
+            <p class="muted small">Solo si el gasto es de un corredor o staff concreto (p. ej. sus vuelos o su alojamiento). Déjalo en «Nadie en concreto» si no.</p>
+          </div>
         </div>
 
         <div class="card">
@@ -135,8 +140,6 @@
           <input id="supplier" type="text" placeholder="Ej. Repsol, Hotel Girona…" autocomplete="off">
           <label for="docNumber">Nº de factura o ticket</label>
           <input id="docNumber" type="text" autocomplete="off">
-          <label for="forWhom">¿Para quién es? (corredor o staff)</label>
-          <select id="forWhom"></select>
           <label for="docType">Tipo de documento</label>
           <select id="docType">
             <option value="">No sé</option>

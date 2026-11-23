@@ -117,7 +117,14 @@
   }
   var HON = 'Honorarios profesionales', SALARY = ['Alberto Barroso', 'Luis Pérez Martínez', 'Enrique Morcillo'];
   function isHon() { return $('concept').value === HON; }
+  var TRAVEL = ['Vuelos/Barco', 'Hotel/Apartamentos', 'Coche de alquiler', 'Inscripciones'];
+  function updateWhom() {
+    var po = $('person').options[$('person').selectedIndex], c = $('concept').value;
+    var show = !!c && c !== HON && ((po && po.dataset.sup === '1') || TRAVEL.indexOf(c) >= 0);
+    $('forWhomBox').hidden = !show; if (!show) $('forWhom').value = '';
+  }
   function updateIva() {
+    updateWhom();
     var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = $('irpfRate').value, ic = $('irpfCalc');
     $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && SALARY.indexOf($('person').value) >= 0);
     ic.hidden = true;
@@ -207,7 +214,7 @@
     var payload = {
       action: 'submit', clientId: state.clientId,
       data: { person: $('person').value, eventId: $('event').value, date: $('date').value, amount: Math.round(a * 100) / 100, concept: $('concept').value,
-        forWhom: $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, irpfRate: isHon() ? $('irpfRate').value : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
+        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, irpfRate: isHon() ? $('irpfRate').value : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
       files: state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; })
     };
     var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
@@ -240,7 +247,7 @@
     state.files = []; state.clientId = ''; renderThumbs();
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
     ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate'].forEach(function (i) { $(i).value = ''; });
-    $('concept').value = ''; $('date').value = todayISO(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('formError').hidden = true; show('formView');
+    $('concept').value = ''; $('date').value = todayISO(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; show('formView');
   }
 
   /* ---------- envío de la cola ---------- */
