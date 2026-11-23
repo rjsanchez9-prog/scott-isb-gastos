@@ -7,7 +7,7 @@
   var MOCK = /[?&]mock=1/.test(location.search) || CFG.backendUrl === 'MOCK';
   var MAX_FILES = 4, MAX_PDF_MB = 7, BLUR_THRESHOLD = 200, TIMEOUT_MS = 60000;
   var $ = function (id) { return document.getElementById(id); };
-  var state = { password: '', config: null, files: [], force: false, clientId: '', offline: false, flushing: false };
+  var state = { password: '', pins: {}, salary: false, config: null, files: [], force: false, clientId: '', offline: false, flushing: false };
 
   /* ---------- utilidades ---------- */
   function toast(msg) { var t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(function () { t.hidden = true; }, 4000); }
@@ -30,7 +30,9 @@
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function savedPassword() { try { return localStorage.getItem('gx.pw') || sessionStorage.getItem('gx.pw') || ''; } catch (e) { return ''; } }
-  function clearSession() { try { localStorage.removeItem('gx.pw'); sessionStorage.removeItem('gx.pw'); localStorage.removeItem('gx.cfg'); } catch (e) {} }
+  function clearSession() { try { localStorage.removeItem('gx.pw'); sessionStorage.removeItem('gx.pw'); localStorage.removeItem('gx.cfg'); localStorage.removeItem('gx.pins'); } catch (e) {} state.pins = {}; }
+  function loadPins() { try { state.pins = JSON.parse(lsGet('gx.pins') || '{}') || {}; } catch (e) { state.pins = {}; } }
+  function savePins() { lsSet('gx.pins', JSON.stringify(state.pins)); }
   function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
   /* ---------- cola local (IndexedDB, con respaldo en memoria) ---------- */
@@ -68,7 +70,7 @@
 
   /* ---------- acceso ---------- */
   function startSession(pw, cfg, offline) {
-    state.password = pw; state.config = cfg; state.offline = !!offline;
+    state.password = pw; state.config = cfg; state.offline = !!offline; loadPins();
     initForm(); show('formView'); renderQueue(); flushQueue();
   }
   function doLogin(pw, remember, silent) {
@@ -114,8 +116,10 @@
     if (o && o.dataset.sup === '1') { n.textContent = 'Factura de un proveedor (agencia de viajes, etc.) que pagará el club por transferencia: queda pendiente de pago hasta que se abone. Indica en "Más datos" para quién es.'; n.hidden = false; }
     else if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
     if (sel.value) { lsSet('gx.person', sel.value); $('minePerson').value = sel.value; }
+    $('pinBox').hidden = !sel.value; $('pin').value = sel.value ? (state.pins[sel.value] || '') : ''; state.salary = false; $('pinStatus').textContent = '';
+    if (sel.value && $('pin').value) verifyPin();
   }
-  var HON = 'Honorarios profesionales', SALARY = ['Alberto Barroso', 'Luis Pérez Martínez', 'Enrique Morcillo'];
+  var HON = 'Honorarios profesionales';
   function isHon() { return $('concept').value === HON; }
   var TRAVEL = ['Vuelos/Barco', 'Hotel/Apartamentos', 'Coche de alquiler', 'Inscripciones'];
   function updateWhom() {
@@ -123,10 +127,19 @@
     var show = !!c && c !== HON && ((po && po.dataset.sup === '1') || TRAVEL.indexOf(c) >= 0);
     $('forWhomBox').hidden = !show; if (!show) $('forWhom').value = '';
   }
+  function verifyPin() {
+    var person = $('person').value, pin = $('pin').value.trim(), st = $('pinStatus');
+    if (!person || !pin) { st.textContent = ''; state.salary = false; return Promise.resolve(false); }
+    if (state.offline || !navigator.onLine) { st.textContent = 'Sin cobertura: el PIN se comprobará al enviar.'; return Promise.resolve(false); }
+    return api({ action: 'pin', password: state.password, person: person, pin: pin }).then(function (res) {
+      if (res && res.ok) { state.pins[person] = pin; savePins(); state.salary = !!res.salary; st.textContent = '✔ PIN correcto'; updateIva(); return true; }
+      state.salary = false; st.textContent = (res && res.error) || 'PIN incorrecto'; updateIva(); return false;
+    }).catch(function () { st.textContent = 'No se pudo comprobar (sin conexión).'; return false; });
+  }
   function updateIva() {
     updateWhom();
     var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = $('irpfRate').value, ic = $('irpfCalc');
-    $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && SALARY.indexOf($('person').value) >= 0);
+    $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && state.salary);
     ic.hidden = true;
     if (!isNaN(a) && a > 0 && r !== '') {
       var base = a / (1 + Number(r) / 100); el.textContent = 'Base imponible ' + fmt(base) + ' € · IVA ' + fmt(a - base) + ' €'; el.hidden = false;
@@ -193,6 +206,7 @@
   function validate() {
     var err = [], a = parseAmount($('amount').value);
     if (!$('person').value) err.push(['person', 'Elige la persona']);
+    if ($('person').value && !$('pin').value.trim()) err.push(['pin', 'Escribe tu PIN personal']);
     if (!$('event').value) err.push(['event', 'Elige el evento']);
     if (!$('date').value) err.push(['date', 'Indica la fecha de la factura']);
     if (isNaN(a) || a <= 0) err.push(['amount', 'Escribe el importe con IVA (mayor que 0)']);
@@ -220,11 +234,12 @@
     var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
     if (state.offline || !navigator.onLine) return saveLocal(payload, info);
     busy(true, 'Subiendo gasto… no cierres la página');
-    api(Object.assign({ password: state.password, force: state.force }, payload)).then(function (res) {
+    api(Object.assign({ password: state.password, pin: $('pin').value.trim(), force: state.force }, payload)).then(function (res) {
       busy(false); state.force = false;
+      if (res && res.pinError) { box.textContent = res.error; box.hidden = false; $('pinStatus').textContent = res.error; $('pin').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
       if (res && res.duplicate) { if (window.confirm(res.message + '\n\n¿Subirlo de todas formas?')) { state.force = true; submit(ev); } return; }
       if (!res || !res.ok) { box.textContent = (res && res.error) || 'No se pudo guardar. Inténtalo de nuevo.'; box.hidden = false; return; }
-      state.clientId = ''; done(info, res.reimbursable !== false, false);
+      state.pins[payload.data.person] = $('pin').value.trim(); savePins(); state.clientId = ''; done(info, res.reimbursable !== false, false);
     }).catch(function (e) {
       busy(false);
       if (e && e.network) saveLocal(payload, info); else { box.textContent = 'Error: ' + (e && e.message); box.hidden = false; }
@@ -259,9 +274,10 @@
       return items.filter(function (i) { return !i.failedMsg; }).reduce(function (p, it) {
         return p.then(function (stop) {
           if (stop) return true;
-          var body = Object.assign({}, it, { password: state.password, force: true }); delete body.info; delete body.savedAt;
+          var body = Object.assign({}, it, { password: state.password, pin: state.pins[it.data.person] || '', force: true }); delete body.info; delete body.savedAt;
           return api(body).then(function (res) {
             if (res && res.ok) { sent++; return qDel(it.clientId).then(function () { return false; }); }
+            if (res && res.pinError) { toast('PIN incorrecto o bloqueado: ábrelo en «Subir gasto» y vuelve a escribirlo para enviar los pendientes.'); return true; }
             if (res && /Clave incorrecta/.test(res.error || '')) { toast('La clave ha cambiado: vuelve a entrar para enviar los pendientes.'); return true; }
             it.failedMsg = (res && res.error) || 'Error'; return qPut(it).then(function () { return false; });
           }).catch(function () { state.offline = false; return true; }); // sin cobertura: se reintenta luego
@@ -272,10 +288,10 @@
 
   /* ---------- Mis gastos ---------- */
   function loadMine() {
-    var person = $('minePerson').value, body = $('mineBody');
-    if (!person) { body.innerHTML = '<p class="empty">Elige una persona.</p>'; return; }
+    var person = $('person').value, pin = $('pin').value.trim(), body = $('mineBody');
+    if (!person || !pin) { body.innerHTML = '<p class="empty">Elige tu nombre y escribe tu PIN en «Subir gasto» para ver tus gastos.</p>'; return; }
     body.innerHTML = '<p class="empty">Cargando…</p>';
-    Promise.all([api({ action: 'mine', password: state.password, person: person }).catch(function (e) { return { ok: false, error: e.message, network: true }; }), qAll()]).then(function (r) {
+    Promise.all([api({ action: 'mine', password: state.password, person: person, pin: pin }).catch(function (e) { return { ok: false, error: e.message, network: true }; }), qAll()]).then(function (r) {
       var res = r[0], local = r[1].filter(function (i) { return i.data.person === person; });
       var html = '';
       if (!res.ok) html += '<p class="warn">' + esc(res.network ? 'Sin conexión: no se puede consultar el servidor.' : res.error) + '</p>';
@@ -299,6 +315,8 @@
       setTimeout(function () {
         if (window.__mockOffline) return rej(netError('Sin conexión'));
         if (body.password !== 'demo') return res({ ok: false, error: 'Clave incorrecta (modo demo: usa "demo")' });
+        if (['pin', 'submit', 'mine'].indexOf(body.action) >= 0 && body.pin !== '123456') return res({ ok: false, pinError: true, error: 'PIN incorrecto (modo demo: 123456)' });
+        if (body.action === 'pin') return res({ ok: true, salary: body.person === 'Persona A' });
         if (body.action === 'login') return res({ ok: true, config: {
           persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa' }; }),
           events: [{ id: 'e1', label: 'Evento de ejemplo 1', quarter: 1 }, { id: 'e2', label: 'Evento de ejemplo 2', quarter: 2 }, { id: 'general', label: 'Gastos generales (sin evento)', quarter: 0 }],
@@ -325,7 +343,7 @@
   $('logout').addEventListener('click', function () { clearSession(); state.password = ''; $('password').value = ''; $('queueBanner').hidden = true; show('loginView'); });
   $('tabUpload').addEventListener('click', function () { show('formView'); });
   $('tabMine').addEventListener('click', function () { show('mineView'); loadMine(); });
-  $('minePerson').addEventListener('change', loadMine);
+  $('pin').addEventListener('change', verifyPin);
   $('person').addEventListener('change', onPersonChange);
   $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva); $('irpfRate').addEventListener('change', updateIva); $('concept').addEventListener('change', updateIva); $('person').addEventListener('change', updateIva);
   $('amount').addEventListener('blur', function () { var a = parseAmount(this.value); if (!isNaN(a) && a > 0) this.value = a.toFixed(2).replace('.', ','); updateIva(); });

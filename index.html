@@ -52,6 +52,11 @@
           <div class="step"><span class="num">1</span><label for="person">Persona</label></div>
           <select id="person" required></select>
           <p id="personNote" class="note" hidden></p>
+          <div id="pinBox" hidden style="margin-top:12px">
+            <span class="sub">Tu PIN personal</span>
+            <input id="pin" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" maxlength="12" placeholder="PIN de 6 cifras">
+            <p id="pinStatus" class="muted small" style="margin-top:6px"></p>
+          </div>
         </div>
 
         <div class="card">
@@ -116,7 +121,7 @@
               <option value="19">19 %</option>
             </select>
             <p id="irpfCalc" class="muted small" hidden></p>
-            <p id="irpfNote" class="muted small" hidden>Para Alberto, Luis y Enrique los honorarios se imputan a su partida de sueldo, no al evento.</p>
+            <p id="irpfNote" class="muted small" hidden>Tus honorarios se imputan a tu partida anual, no a un evento.</p>
           </div>
           <p class="muted small">Míralo en la factura: debe figurar <b>C.D. Probikes Morón</b> como cliente. Si es un ticket sin nombre, elige <b>No</b>.</p>
         </div>
@@ -169,10 +174,8 @@
 
     <!-- MIS GASTOS -->
     <section id="mineView" class="view" hidden>
-      <div class="card">
-        <label for="minePerson" class="first">¿De quién quieres ver los gastos?</label>
-        <select id="minePerson"></select>
-      </div>
+      <p class="muted" style="margin:4px 4px 12px">Tus gastos, según el nombre y el PIN que has puesto en «Subir gasto».</p>
+      <select id="minePerson" hidden></select>
       <div id="mineBody"></div>
     </section>
   </main>
