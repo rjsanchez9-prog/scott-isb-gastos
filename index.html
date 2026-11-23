@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2F5258">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Gastos ISB">
+  <title>Gastos SCOTT-ISB 2027</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <img class="logo" src="assets/logo-blanco.png" alt="SCOTT ISB Off Road">
+    <div class="top-title">Gastos 2027<span id="logout" hidden>Salir</span></div>
+  </header>
+  <nav id="tabs" class="tabs" hidden>
+    <button id="tabUpload" class="tab active" type="button">Subir gasto</button>
+    <button id="tabMine" class="tab" type="button">Mis gastos</button>
+  </nav>
+
+  <main>
+    <div id="queueBanner" class="qbanner" hidden>
+      <span id="queueText"></span>
+      <button id="queueRetry" type="button">Reintentar</button>
+      <button id="queueDiscard" type="button" hidden>Descartar errores</button>
+    </div>
+
+    <!-- ACCESO -->
+    <section id="loginView" class="view">
+      <div class="card">
+        <h1>Acceso del equipo</h1>
+        <p class="muted">Plataforma interna para subir facturas y tickets de la temporada.</p>
+        <label for="password">Clave de acceso</label>
+        <input id="password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="••••••••">
+        <label class="check"><input id="remember" type="checkbox" checked> Mantener la sesión en este móvil</label>
+        <p id="loginError" class="error" hidden></p>
+        <button id="loginBtn" class="btn primary" type="button">Entrar</button>
+      </div>
+    </section>
+
+    <!-- FORMULARIO -->
+    <section id="formView" class="view" hidden>
+      <form id="expenseForm" novalidate autocomplete="off">
+
+        <div class="card">
+          <div class="step"><span class="num">1</span><label for="person">Persona</label></div>
+          <select id="person" required></select>
+          <p id="personNote" class="note" hidden></p>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">2</span><label for="event">Evento</label></div>
+          <select id="event" required></select>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">3</span><label for="date">Fecha e importe</label></div>
+          <div class="row">
+            <div class="col">
+              <span class="sub">Fecha de la factura</span>
+              <input id="date" type="date" required>
+            </div>
+            <div class="col">
+              <span class="sub">Importe IVA incluido</span>
+              <div class="money"><input id="amount" type="text" inputmode="decimal" placeholder="0,00" required><b>€</b></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">4</span><label for="concept">Concepto</label></div>
+          <select id="concept" required></select>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">5</span><label>Factura o ticket</label></div>
+          <p class="muted small">Foto <b>nítida y completa</b>: que se lea proveedor, fecha, NIF e importe.</p>
+          <div class="row">
+            <button type="button" id="btnCamera" class="btn ghost">📷 Hacer foto</button>
+            <button type="button" id="btnGallery" class="btn ghost">🖼️ Galería / archivo</button>
+          </div>
+          <input id="fileCamera" type="file" accept="image/*" capture="environment" hidden>
+          <input id="fileGallery" type="file" accept="image/*,application/pdf" multiple hidden>
+          <ul id="thumbs" class="thumbs"></ul>
+          <p id="fileWarn" class="warn" hidden></p>
+        </div>
+
+        <details class="card more">
+          <summary>Más datos (opcional, ayudan con el IVA)</summary>
+          <label for="supplier">Proveedor / establecimiento</label>
+          <input id="supplier" type="text" placeholder="Ej. Repsol, Hotel Girona…" autocomplete="off">
+          <label for="docNumber">Nº de factura o ticket</label>
+          <input id="docNumber" type="text" autocomplete="off">
+          <div class="row">
+            <div class="col">
+              <label for="docType">Tipo de documento</label>
+              <select id="docType">
+                <option value="">No sé</option>
+                <option>Factura completa</option>
+                <option>Ticket / factura simplificada</option>
+              </select>
+            </div>
+            <div class="col">
+              <label for="ivaRate">Tipo de IVA</label>
+              <select id="ivaRate">
+                <option value="">No sé</option>
+                <option value="21">21 %</option>
+                <option value="10">10 %</option>
+                <option value="4">4 %</option>
+                <option value="0">Exento (0 %)</option>
+              </select>
+            </div>
+          </div>
+          <p id="ivaCalc" class="muted small" hidden></p>
+          <label for="inClub">¿Está a nombre del club (C.D. Probikes Morón)?</label>
+          <select id="inClub">
+            <option value="">No sé</option>
+            <option>Sí</option>
+            <option>No</option>
+          </select>
+          <label for="notes">Notas</label>
+          <textarea id="notes" rows="2" placeholder="Algo que debamos saber…"></textarea>
+        </details>
+
+        <p id="formError" class="error" hidden></p>
+        <div class="spacer"></div>
+        <div class="submitbar"><button id="submitBtn" class="btn primary big" type="submit">Enviar gasto</button></div>
+      </form>
+    </section>
+
+    <!-- ÉXITO -->
+    <section id="doneView" class="view" hidden>
+      <div class="card center">
+        <div id="doneIcon" class="ok">✔</div>
+        <h1 id="doneTitle">Gasto guardado</h1>
+        <p id="doneSummary" class="muted"></p>
+        <p id="doneNote" class="note" hidden></p>
+        <button id="againBtn" class="btn primary" type="button">Subir otro gasto</button>
+      </div>
+    </section>
+
+    <!-- MIS GASTOS -->
+    <section id="mineView" class="view" hidden>
+      <div class="card">
+        <label for="minePerson" class="first">¿De quién quieres ver los gastos?</label>
+        <select id="minePerson"></select>
+      </div>
+      <div id="mineBody"></div>
+    </section>
+  </main>
+
+  <div id="busy" class="busy" hidden><div class="spin"></div><p id="busyText">Enviando…</p></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
