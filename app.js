@@ -115,9 +115,16 @@
     else if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
     if (sel.value) { lsSet('gx.person', sel.value); $('minePerson').value = sel.value; }
   }
+  var HON = 'Honorarios profesionales', SALARY = ['Alberto Barroso', 'Luis Pérez Martínez', 'Enrique Morcillo'];
+  function isHon() { return $('concept').value === HON; }
   function updateIva() {
-    var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc');
-    if (!isNaN(a) && a > 0 && r !== '') { var base = a / (1 + Number(r) / 100); el.textContent = 'Base imponible ' + fmt(base) + ' € · IVA ' + fmt(a - base) + ' €'; el.hidden = false; } else el.hidden = true;
+    var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = $('irpfRate').value, ic = $('irpfCalc');
+    $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && SALARY.indexOf($('person').value) >= 0);
+    ic.hidden = true;
+    if (!isNaN(a) && a > 0 && r !== '') {
+      var base = a / (1 + Number(r) / 100); el.textContent = 'Base imponible ' + fmt(base) + ' € · IVA ' + fmt(a - base) + ' €'; el.hidden = false;
+      if (isHon() && ir !== '') { var ret = Math.round(base * Number(ir)) / 100; ic.textContent = 'Retención ' + fmt(ret) + ' € · A transferir ' + fmt(a - ret) + ' €'; ic.hidden = false; }
+    } else el.hidden = true;
   }
 
   /* ---------- fotos y archivos ---------- */
@@ -185,6 +192,7 @@
     if (!$('concept').value) err.push(['concept', 'Elige el tipo de gasto']);
     if (!$('ivaRate').value) err.push(['ivaRate', 'Indica el tipo de IVA (mira la factura)']);
     if (!$('inClub').value) err.push(['inClub', 'Indica si la factura está a nombre del club']);
+    if (isHon() && $('irpfRate').value === '') err.push(['irpfRate', 'Indica la retención de IRPF de la factura (0 si no lleva)']);
     if (!state.files.length) err.push(['btnCamera', 'Adjunta la foto de la factura o ticket']);
     return err;
   }
@@ -199,7 +207,7 @@
     var payload = {
       action: 'submit', clientId: state.clientId,
       data: { person: $('person').value, eventId: $('event').value, date: $('date').value, amount: Math.round(a * 100) / 100, concept: $('concept').value,
-        forWhom: $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, inClub: $('inClub').value, notes: $('notes').value.trim() },
+        forWhom: $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, irpfRate: isHon() ? $('irpfRate').value : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
       files: state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; })
     };
     var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
@@ -231,8 +239,8 @@
   function resetForAnother() {
     state.files = []; state.clientId = ''; renderThumbs();
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
-    ['docType', 'ivaRate', 'inClub', 'forWhom'].forEach(function (i) { $(i).value = ''; });
-    $('concept').value = ''; $('date').value = todayISO(); $('ivaCalc').hidden = true; $('formError').hidden = true; show('formView');
+    ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate'].forEach(function (i) { $(i).value = ''; });
+    $('concept').value = ''; $('date').value = todayISO(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('formError').hidden = true; show('formView');
   }
 
   /* ---------- envío de la cola ---------- */
@@ -270,7 +278,7 @@
       local.forEach(function (i) { items.push('<li><span class="t">' + esc(i.info.label) + '</span><span class="a">' + fmt(i.data.amount) + ' €</span><span class="s">' + esc(i.data.concept) + ' · ' + esc(i.data.date) + '</span><span class="s" style="text-align:right"><span class="pill local">Sin enviar</span></span></li>'); });
       if (res.ok) res.items.forEach(function (i) {
         var cls = i.status === 'Pendiente' ? 'pend' : (i.status === 'Liquidado' ? 'paid' : ''), extra = i.status === 'Liquidado' && i.paidOn ? ' · ' + esc(i.paidOn) : '';
-        items.push('<li><span class="t">' + esc(i.event) + '</span><span class="a">' + fmt(i.amount) + ' €</span><span class="s">' + esc(i.concept) + (i.supplier ? ' · ' + esc(i.supplier) : '') + ' · ' + esc(i.date) + '</span><span class="s" style="text-align:right"><span class="pill ' + cls + '">' + esc(i.status) + '</span>' + extra + '</span></li>');
+        items.push('<li><span class="t">' + esc(i.event) + '</span><span class="a">' + fmt(i.amount) + ' €</span><span class="s">' + esc(i.concept) + (i.supplier ? ' · ' + esc(i.supplier) : '') + ' · ' + esc(i.date) + (i.irpf ? ' · IRPF −' + fmt(i.irpf) + ' € (neto ' + fmt(i.net) + ' €)' : '') + '</span><span class="s" style="text-align:right"><span class="pill ' + cls + '">' + esc(i.status) + '</span>' + extra + '</span></li>');
       });
       html += items.length ? '<ul class="items">' + items.join('') + '</ul>' : (res.ok ? '<p class="empty">Todavía no hay gastos de ' + esc(person) + '.</p>' : '');
       body.innerHTML = html;
@@ -287,7 +295,7 @@
         if (body.action === 'login') return res({ ok: true, config: {
           persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa' }; }),
           events: [{ id: 'e1', label: 'Evento de ejemplo 1', quarter: 1 }, { id: 'e2', label: 'Evento de ejemplo 2', quarter: 2 }, { id: 'general', label: 'Gastos generales (sin evento)', quarter: 0 }],
-          concepts: ['Vuelos/Barco', 'Diésel', 'Peajes/Parking', 'Comida', 'Hotel/Apartamentos', 'Otros'] } });
+          concepts: ['Vuelos/Barco', 'Diésel', 'Peajes/Parking', 'Comida', 'Hotel/Apartamentos', 'Otros', 'Honorarios profesionales'] } });
         if (body.action === 'submit') {
           var dup = mockDb.filter(function (x) { return x.clientId === body.clientId; })[0]; if (dup) return res({ ok: true, id: dup.id, already: true, reimbursable: dup.reimb });
           var id = 'DEMO-' + (mockDb.length + 1), reimb = body.data.person !== 'Tarjeta empresa';
@@ -312,7 +320,7 @@
   $('tabMine').addEventListener('click', function () { show('mineView'); loadMine(); });
   $('minePerson').addEventListener('change', loadMine);
   $('person').addEventListener('change', onPersonChange);
-  $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva);
+  $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva); $('irpfRate').addEventListener('change', updateIva); $('concept').addEventListener('change', updateIva); $('person').addEventListener('change', updateIva);
   $('amount').addEventListener('blur', function () { var a = parseAmount(this.value); if (!isNaN(a) && a > 0) this.value = a.toFixed(2).replace('.', ','); updateIva(); });
   $('btnCamera').addEventListener('click', function () { $('fileCamera').click(); });
   $('btnGallery').addEventListener('click', function () { $('fileGallery').click(); });
