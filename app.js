@@ -121,6 +121,11 @@
     if (needsPin() && $('pin').value) verifyPin();
   }
   var HON = 'Honorarios profesionales';
+  function irpfValue() {
+    var v = $('irpfRate').value; if (v !== 'other') return v;
+    var t = $('irpfOther').value.trim().replace(',', '.'), n = Number(t);
+    return (t !== '' && !isNaN(n) && n >= 0 && n <= 47) ? String(Math.round(n * 100) / 100) : '';
+  }
   function isHon() { return $('concept').value === HON; }
   var TRAVEL = ['Vuelos/Barco', 'Hotel/Apartamentos', 'Coche de alquiler', 'Inscripciones'];
   function updateWhom() {
@@ -139,7 +144,7 @@
   }
   function updateIva() {
     updateWhom();
-    var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = $('irpfRate').value, ic = $('irpfCalc');
+    var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = irpfValue(), ic = $('irpfCalc'); $('irpfOther').hidden = $('irpfRate').value !== 'other';
     $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && state.salary);
     ic.hidden = true;
     if (!isNaN(a) && a > 0 && r !== '') {
@@ -214,7 +219,7 @@
     if (!$('concept').value) err.push(['concept', 'Elige el tipo de gasto']);
     if (!$('ivaRate').value) err.push(['ivaRate', 'Indica el tipo de IVA (mira la factura)']);
     if (!$('inClub').value) err.push(['inClub', 'Indica si la factura está a nombre del club']);
-    if (isHon() && $('irpfRate').value === '') err.push(['irpfRate', 'Indica la retención de IRPF de la factura (0 si no lleva)']);
+    if (isHon() && irpfValue() === '') err.push([$('irpfRate').value === 'other' ? 'irpfOther' : 'irpfRate', 'Indica la retención de IRPF de la factura (0 si no lleva; entre 0 y 47 %)']);
     if (!state.files.length) err.push(['btnCamera', 'Adjunta la foto de la factura o ticket']);
     return err;
   }
@@ -229,7 +234,7 @@
     var payload = {
       action: 'submit', clientId: state.clientId,
       data: { person: $('person').value, eventId: $('event').value, date: $('date').value, amount: Math.round(a * 100) / 100, concept: $('concept').value,
-        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, irpfRate: isHon() ? $('irpfRate').value : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
+        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), docType: $('docType').value, ivaRate: $('ivaRate').value, irpfRate: isHon() ? irpfValue() : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
       files: state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; })
     };
     var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
@@ -262,7 +267,7 @@
   function resetForAnother() {
     state.files = []; state.clientId = ''; renderThumbs();
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
-    ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate'].forEach(function (i) { $(i).value = ''; });
+    ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate', 'irpfOther'].forEach(function (i) { $(i).value = ''; });
     $('concept').value = ''; $('date').value = todayISO(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; show('formView');
   }
 
@@ -346,7 +351,7 @@
   $('tabMine').addEventListener('click', function () { show('mineView'); loadMine(); });
   $('pin').addEventListener('change', verifyPin);
   $('person').addEventListener('change', onPersonChange);
-  $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva); $('irpfRate').addEventListener('change', updateIva); $('concept').addEventListener('change', updateIva); $('person').addEventListener('change', updateIva);
+  $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva); $('irpfRate').addEventListener('change', updateIva); $('irpfOther').addEventListener('input', updateIva); $('concept').addEventListener('change', updateIva); $('person').addEventListener('change', updateIva);
   $('amount').addEventListener('blur', function () { var a = parseAmount(this.value); if (!isNaN(a) && a > 0) this.value = a.toFixed(2).replace('.', ','); updateIva(); });
   $('btnCamera').addEventListener('click', function () { $('fileCamera').click(); });
   $('btnGallery').addEventListener('click', function () { $('fileGallery').click(); });
