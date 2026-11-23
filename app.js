@@ -181,6 +181,8 @@
     if (!$('date').value) err.push(['date', 'Indica la fecha de la factura']);
     if (isNaN(a) || a <= 0) err.push(['amount', 'Escribe el importe con IVA (mayor que 0)']);
     if (!$('concept').value) err.push(['concept', 'Elige el tipo de gasto']);
+    if (!$('ivaRate').value) err.push(['ivaRate', 'Indica el tipo de IVA (mira la factura)']);
+    if (!$('inClub').value) err.push(['inClub', 'Indica si la factura está a nombre del club']);
     if (!state.files.length) err.push(['btnCamera', 'Adjunta la foto de la factura o ticket']);
     return err;
   }

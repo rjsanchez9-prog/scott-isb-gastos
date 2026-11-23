@@ -79,7 +79,33 @@
         </div>
 
         <div class="card">
-          <div class="step"><span class="num">5</span><label>Factura o ticket</label></div>
+          <div class="step"><span class="num">5</span><label>IVA y titular de la factura</label></div>
+          <div class="row">
+            <div class="col">
+              <span class="sub">Tipo de IVA</span>
+              <select id="ivaRate" required>
+                <option value="">Elige…</option>
+                <option value="21">21 %</option>
+                <option value="10">10 %</option>
+                <option value="4">4 %</option>
+                <option value="0">Exento (0 %)</option>
+              </select>
+            </div>
+            <div class="col">
+              <span class="sub">¿A nombre del club?</span>
+              <select id="inClub" required>
+                <option value="">Elige…</option>
+                <option>Sí</option>
+                <option>No</option>
+              </select>
+            </div>
+          </div>
+          <p id="ivaCalc" class="muted small" hidden></p>
+          <p class="muted small">Míralo en la factura: debe figurar <b>C.D. Probikes Morón</b> como cliente. Si es un ticket sin nombre, elige <b>No</b>.</p>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">6</span><label>Factura o ticket</label></div>
           <p class="muted small">Foto <b>nítida y completa</b>: que se lea proveedor, fecha, NIF e importe.</p>
           <div class="row">
             <button type="button" id="btnCamera" class="btn ghost">📷 Hacer foto</button>
@@ -97,32 +123,11 @@
           <input id="supplier" type="text" placeholder="Ej. Repsol, Hotel Girona…" autocomplete="off">
           <label for="docNumber">Nº de factura o ticket</label>
           <input id="docNumber" type="text" autocomplete="off">
-          <div class="row">
-            <div class="col">
-              <label for="docType">Tipo de documento</label>
-              <select id="docType">
-                <option value="">No sé</option>
-                <option>Factura completa</option>
-                <option>Ticket / factura simplificada</option>
-              </select>
-            </div>
-            <div class="col">
-              <label for="ivaRate">Tipo de IVA</label>
-              <select id="ivaRate">
-                <option value="">No sé</option>
-                <option value="21">21 %</option>
-                <option value="10">10 %</option>
-                <option value="4">4 %</option>
-                <option value="0">Exento (0 %)</option>
-              </select>
-            </div>
-          </div>
-          <p id="ivaCalc" class="muted small" hidden></p>
-          <label for="inClub">¿Está a nombre del club (C.D. Probikes Morón)?</label>
-          <select id="inClub">
+          <label for="docType">Tipo de documento</label>
+          <select id="docType">
             <option value="">No sé</option>
-            <option>Sí</option>
-            <option>No</option>
+            <option>Factura completa</option>
+            <option>Ticket / factura simplificada</option>
           </select>
           <label for="notes">Notas</label>
           <textarea id="notes" rows="2" placeholder="Algo que debamos saber…"></textarea>
