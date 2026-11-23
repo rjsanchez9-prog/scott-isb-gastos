@@ -30,8 +30,8 @@
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function savedPassword() { try { return localStorage.getItem('gx.pw') || sessionStorage.getItem('gx.pw') || ''; } catch (e) { return ''; } }
-  function clearSession() { try { localStorage.removeItem('gx.pw'); sessionStorage.removeItem('gx.pw'); localStorage.removeItem('gx.cfg'); localStorage.removeItem('gx.pins'); } catch (e) {} state.pins = {}; }
-  function loadPins() { try { state.pins = JSON.parse(lsGet('gx.pins') || '{}') || {}; } catch (e) { state.pins = {}; } }
+  function clearSession() { state.mpin = ''; try { localStorage.removeItem('gx.mpin'); localStorage.removeItem('gx.pw'); sessionStorage.removeItem('gx.pw'); localStorage.removeItem('gx.cfg'); localStorage.removeItem('gx.pins'); } catch (e) {} state.pins = {}; }
+  function loadPins() { state.mpin = lsGet('gx.mpin') || ''; try { state.pins = JSON.parse(lsGet('gx.pins') || '{}') || {}; } catch (e) { state.pins = {}; } }
   function savePins() { lsSet('gx.pins', JSON.stringify(state.pins)); }
   function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
@@ -118,7 +118,7 @@
     if (o && o.dataset.sup === '1') { n.textContent = 'Factura de un proveedor (agencia de viajes, etc.) que pagará el club por transferencia: queda pendiente de pago hasta que se abone. Indica en "Más datos" para quién es.'; n.hidden = false; }
     else if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
     if (sel.value) { lsSet('gx.person', sel.value); $('minePerson').value = sel.value; }
-    $('pinBox').hidden = !needsPin(); $('pin').value = needsPin() ? (state.pins[sel.value] || '') : ''; state.salary = false; $('pinStatus').textContent = '';
+    $('pinBox').hidden = !needsPin(); $('pin').value = needsPin() ? (state.pins[sel.value] || (sel.value !== 'José María Sánchez' && state.mpin) || '') : ''; state.salary = false; $('pinStatus').textContent = '';
     if (needsPin() && $('pin').value) verifyPin();
   }
   var HON = 'Honorarios profesionales';
@@ -139,6 +139,7 @@
     if (!person || !pin) { st.textContent = ''; state.salary = false; return Promise.resolve(false); }
     if (state.offline || !navigator.onLine) { st.textContent = 'Sin cobertura: el PIN se comprobará al enviar.'; return Promise.resolve(false); }
     return api({ action: 'pin', password: state.password, person: person, pin: pin }).then(function (res) {
+      if (res && res.ok && res.master) { state.mpin = pin; lsSet('gx.mpin', pin); state.salary = false; st.textContent = '✔ PIN maestro: solo sirve para consultar «Mis gastos» de esta persona'; updateIva(); return true; }
       if (res && res.ok) { state.pins[person] = pin; savePins(); state.salary = !!res.salary; st.textContent = '✔ PIN correcto'; updateIva(); return true; }
       state.salary = false; st.textContent = (res && res.error) || 'PIN incorrecto'; updateIva(); return false;
     }).catch(function () { st.textContent = 'No se pudo comprobar (sin conexión).'; return false; });
@@ -285,6 +286,7 @@
     var err = [], a = parseAmount($('amount').value);
     if (!$('person').value) err.push(['person', 'Elige la persona']);
     if (needsPin() && !$('pin').value.trim()) err.push(['pin', 'Escribe tu PIN personal']);
+    else if (needsPin() && state.mpin && $('person').value !== 'José María Sánchez' && $('pin').value.trim() === state.mpin) err.push(['pin', 'Ese es el PIN maestro: solo sirve para consultar. Para subir un gasto a nombre de esta persona hace falta su propio PIN']);
     if (!$('event').value) err.push(['event', 'Elige el evento']);
     if (!$('date').value) err.push(['date', 'Indica la fecha que figura en la factura o ticket']);
     else if ($('date').value > todayISO() || $('date').value < '2026-11-01') err.push(['date', 'La fecha debe estar entre el 01/11/2026 y hoy']);
@@ -385,6 +387,7 @@
       var res = r[0], local = r[1].filter(function (i) { return i.data.person === person; });
       var html = '';
       if (!res.ok) html += '<p class="warn">' + esc(res.network ? 'Sin conexión: no se puede consultar el servidor.' : res.error) + '</p>';
+      if (res.ok && res.master) html += '<p class="muted small" style="margin-bottom:8px">Consulta con PIN maestro: estás viendo los gastos de ' + esc(res.person) + '.</p>';
       else if (res.reimbursable) html += '<div class="tiles"><div class="tile main full"><small>' + (res.supplier ? 'Pendiente de pago a proveedores' : 'Pendiente de cobro') + '</small><b>' + fmt(res.pending) + ' €</b></div><div class="tile"><small>Ya liquidado</small><b>' + fmt(res.paid) + ' €</b></div><div class="tile"><small>Total subido</small><b>' + fmt(res.total) + ' €</b></div></div>';
       else html += '<div class="tiles"><div class="tile main full"><small>Pagado con la tarjeta del club (no se liquida)</small><b>' + fmt(res.total) + ' €</b></div></div>';
       var items = [];
