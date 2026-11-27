@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2F5258">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Gastos ISB">
+  <meta name="robots" content="noindex, nofollow">
+  <title>[PRUEBAS] Gastos SCOTT-ISB 2027</title>
+  
+  <link rel="icon" href="assets/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="pruebas" style="position:fixed;left:0;right:0;top:0;z-index:99999;background:#b3261e;color:#fff;font:700 12px/22px Arial,sans-serif;text-align:center;letter-spacing:.04em">ENTORNO DE PRUEBAS · datos de mentira · nada de aquí es real</div><style>body{padding-top:22px !important}.top{top:22px !important}.tabs{top:93px !important}</style>
+  <header class="top">
+    <img class="logo" src="assets/logo-blanco.png" alt="SCOTT ISB Off Road">
+    <div class="top-title">Gastos 2027<span id="logout" hidden>Salir</span></div>
+  </header>
+  <nav id="tabs" class="tabs" hidden>
+    <button id="tabUpload" class="tab active" type="button">Subir gasto</button>
+    <button id="tabMine" class="tab" type="button">Mis gastos</button>
+  </nav>
+
+  <main>
+    <div id="queueBanner" class="qbanner" hidden>
+      <span id="queueText"></span>
+      <button id="queueRetry" type="button">Reintentar</button>
+      <button id="queueForce" type="button" hidden>Enviar igualmente</button>
+      <button id="queueDiscard" type="button" hidden>Descartar errores</button>
+    </div>
+
+    <!-- ACCESO -->
+    <section id="loginView" class="view">
+      <div class="card">
+        <h1>Acceso del equipo</h1>
+        <p class="muted">Plataforma interna para subir facturas y tickets de la temporada.</p>
+        <label for="password">Clave de acceso</label>
+        <input id="password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="••••••••">
+        <label class="check"><input id="remember" type="checkbox" checked> Mantener la sesión en este móvil</label>
+        <p id="loginError" class="error" hidden></p>
+        <button id="loginBtn" class="btn primary" type="button">Entrar</button>
+      </div>
+    </section>
+
+    <!-- FORMULARIO -->
+    <section id="formView" class="view" hidden>
+      <form id="expenseForm" novalidate autocomplete="off">
+
+        <div class="card">
+          <div class="step"><span class="num">1</span><label for="person">Persona</label></div>
+          <select id="person" required></select>
+          <p id="personNote" class="note" hidden></p>
+          <div id="pinBox" hidden style="margin-top:12px">
+            <span class="sub">Tu PIN personal</span>
+            <input id="pin" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" maxlength="12" placeholder="PIN de 6 cifras">
+            <p id="pinStatus" class="muted small" style="margin-top:6px"></p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">2</span><label for="event">Evento</label></div>
+          <select id="event" required></select>
+          <p id="eventHint" class="muted small" hidden style="margin:8px 0 0">Último evento que usaste: cámbialo si no es el de este gasto.</p>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">3</span><label for="date">Fecha e importe</label></div>
+          <p class="muted small" style="margin:0 0 8px">Pon la <b>fecha que figura en la factura o ticket</b>, no la de hoy. Si juntas varios, súbelos uno a uno, cada uno con su fecha.</p>
+          <div class="row">
+            <div class="col">
+              <span class="sub">Fecha de la factura</span>
+              <input id="date" type="date" required>
+            </div>
+            <div class="col">
+              <span class="sub" id="amountLabel">Importe IVA incluido</span>
+              <div class="money"><input id="amount" type="text" inputmode="decimal" placeholder="0,00" required><b>€</b></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">4</span><label for="concept">Concepto</label></div>
+          <div id="conceptTiles" class="ctiles"></div>
+          <div id="conceptMore" hidden><select id="concept"></select></div>
+          <div id="forWhomBox" hidden>
+            <span class="sub">¿Es el gasto de otra persona? (opcional)</span>
+            <select id="forWhom"></select>
+            <p class="muted small">Solo si el gasto es de un corredor o staff concreto (p. ej. sus vuelos o su alojamiento). Déjalo en «Nadie en concreto» si no.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">5</span><label>IVA y titular de la factura</label></div>
+          <div class="row">
+            <div class="col">
+              <span class="sub">Tipo de IVA</span>
+              <select id="ivaRate" required>
+                <option value="">Elige…</option>
+                <option value="21">21 %</option>
+                <option value="10">10 %</option>
+                <option value="4">4 %</option>
+                <option value="0">Exento (0 %)</option>
+                <option value="multi">Varios tipos (supermercado…)</option>
+              </select>
+            </div>
+            <div class="col" id="inClubBox">
+              <span class="sub">¿A nombre del club?</span>
+              <select id="inClub" required>
+                <option value="">Elige…</option>
+                <option>Sí</option>
+                <option>No</option>
+              </select>
+            </div>
+          </div>
+          <p id="ivaSuggest" class="muted small" hidden></p>
+          <p id="inClubTicket" class="muted small" hidden>Un ticket no va a nombre del club.</p>
+          <p id="ivaCalc" class="muted small" hidden></p>
+          <div id="ivaMulti" hidden>
+            <p class="muted small" style="margin-top:10px">Copia del ticket o factura el <b>desglose de IVA</b>: la base y la cuota de cada tipo. Deja en blanco los tipos que no aparezcan.</p>
+            <div class="mrow mhead"><span></span><span>Base imponible</span><span>Cuota IVA</span></div>
+            <div class="mrow"><b>21 %</b><input id="mb21" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><input id="mc21" type="text" inputmode="decimal" autocomplete="off" placeholder="auto"></div>
+            <div class="mrow"><b>10 %</b><input id="mb10" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><input id="mc10" type="text" inputmode="decimal" autocomplete="off" placeholder="auto"></div>
+            <div class="mrow"><b>4 %</b><input id="mb4" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><input id="mc4" type="text" inputmode="decimal" autocomplete="off" placeholder="auto"></div>
+            <div class="mrow"><b>Exento</b><input id="mb0" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00"><span class="muted small" style="align-self:center">0,00</span></div>
+            <p id="multiSum" class="small" style="margin-top:8px"></p>
+          </div>
+          <div id="irpfBox" hidden>
+            <span class="sub">Retención de IRPF de la factura</span>
+            <select id="irpfRate">
+              <option value="">Elige…</option>
+              <option value="0">Sin retención (0 %)</option>
+              <option value="7">7 % (inicio de actividad)</option>
+              <option value="15">15 % (general)</option>
+              <option value="other">Otro porcentaje…</option>
+            </select>
+            <input id="irpfOther" type="text" inputmode="decimal" autocomplete="off" placeholder="% que figura en la factura (ej. 1,5)" hidden style="margin-top:8px">
+            <p id="irpfHelp" class="muted small" style="margin-top:6px">Pon el porcentaje que indique la factura del profesional.</p>
+            <p id="irpfCalc" class="muted small" hidden></p>
+            <p id="irpfWarn" class="warn" hidden>Con retención de IRPF hace falta una factura completa: un ticket no sirve.</p>
+            <p id="irpfNote" class="muted small" hidden>Tus honorarios se imputan a tu partida anual, no a un evento.</p>
+          </div>
+          <p id="inClubHelp" class="muted small">Míralo en la factura: debe figurar <b>C.D. Probikes Morón</b> como cliente. Si es un ticket sin nombre, elige <b>No</b>.</p>
+        </div>
+
+        <div class="card">
+          <div class="step"><span class="num">6</span><label>Factura o ticket</label></div>
+          <label for="docType">¿Qué has recibido?</label>
+          <select id="docType" required>
+            <option value="">Elige…</option>
+            <option>Factura completa</option>
+            <option>Ticket / factura simplificada</option>
+          </select>
+          <p class="muted small">Una <b>factura completa</b> lleva los datos fiscales de quien la emite (razón social y NIF). Un <b>ticket</b> solo trae establecimiento e importe.</p>
+          <p class="muted small" style="margin-top:12px">Foto <b>nítida y completa</b>: que se lea proveedor, fecha, NIF e importe.</p>
+          <div class="row">
+            <button type="button" id="btnCamera" class="btn ghost">📷 Hacer foto</button>
+            <button type="button" id="btnGallery" class="btn ghost">🖼️ Galería / archivo</button>
+          </div>
+          <input id="fileCamera" type="file" accept="image/*" capture="environment" hidden>
+          <input id="fileGallery" type="file" accept="image/*,application/pdf" multiple hidden>
+          <ul id="thumbs" class="thumbs"></ul>
+          <p id="fileWarn" class="warn" hidden></p>
+        </div>
+
+        <details class="card more" id="more">
+          <summary id="moreSum">Más datos (opcional)</summary>
+          <label for="supplier" id="lblSupplier">Establecimiento (opcional)</label>
+          <input id="supplier" type="text" placeholder="Ej. Repsol, Hotel Girona…" autocomplete="off">
+          <div id="nifBox" hidden>
+            <label for="nif">NIF / CIF del emisor</label>
+            <input id="nif" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ej. B12345678 (o identificador extranjero con prefijo de país)">
+            <p id="nifStatus" class="muted small" style="margin-top:6px"></p>
+          </div>
+          <label for="docNumber" id="lblDocNumber">Nº de ticket (opcional)</label>
+          <input id="docNumber" type="text" autocomplete="off">
+          <label for="notes">Notas</label>
+          <textarea id="notes" rows="2" placeholder="Algo que debamos saber…"></textarea>
+        </details>
+
+        <p id="formError" class="error" hidden></p>
+        <div class="spacer"></div>
+        <div class="submitbar"><button id="submitBtn" class="btn primary big" type="submit">Enviar gasto</button></div>
+      </form>
+    </section>
+
+    <!-- ÉXITO -->
+    <section id="doneView" class="view" hidden>
+      <div class="card center">
+        <div id="doneIcon" class="ok">✔</div>
+        <h1 id="doneTitle">Gasto guardado</h1>
+        <p id="doneSummary" class="muted"></p>
+        <p id="doneNote" class="note" hidden></p>
+        <p id="doneAuto" class="note" hidden>Aprobado automáticamente (gasto pequeño)</p>
+        <button id="againBtn" class="btn primary" type="button">Subir otro gasto</button>
+      </div>
+    </section>
+
+    <!-- MIS GASTOS -->
+    <section id="mineView" class="view" hidden>
+      <p class="muted" style="margin:4px 4px 12px">Tus gastos, según el nombre y el PIN que has puesto en «Subir gasto».</p>
+      <select id="minePerson" hidden></select>
+      <div id="mineBody"></div>
+    </section>
+  </main>
+
+  <div id="busy" class="busy" hidden><div class="spin"></div><p id="busyText">Enviando…</p></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
