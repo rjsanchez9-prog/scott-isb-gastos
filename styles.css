@@ -86,3 +86,15 @@ label.first{margin-top:0}
 .empty{text-align:center;color:var(--muted);padding:24px 0}
 .mrow{display:grid;grid-template-columns:56px 1fr 1fr;gap:8px;align-items:center;margin-top:8px}.mrow b{font-size:15px}.mrow input{text-align:right}.mhead{margin-top:6px;font-size:12px;color:var(--muted,#9aa7a9);text-align:right}
 #multiSum.msum-ok{color:#7fd1a0}#multiSum.msum-bad{color:#ff8f8f}
+
+/* teselas de concepto y filtros de «Mis gastos» */
+.ctiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ct{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:72px;padding:8px 4px;border-radius:14px;border:1.5px solid var(--line);background:var(--bg);color:var(--text);font:inherit;cursor:pointer}
+.ct .ci{font-size:22px;line-height:1}.ct .cl{font-size:13px;font-weight:600;text-align:center;line-height:1.15}
+.ct.on{border-color:var(--brand-light);background:rgba(79,134,142,.28)}
+#conceptMore{margin-top:10px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 10px}
+.chip{min-height:38px;padding:0 14px;border-radius:999px;border:1.5px solid var(--line);background:transparent;color:var(--muted);font:inherit;font-weight:700;font-size:14px;cursor:pointer}
+.chip.on{border-color:var(--brand-light);background:rgba(79,134,142,.28);color:#fff}
+.mine-ev{margin-bottom:10px}
+.mine-sum{margin:2px 4px 10px;font-size:15px}

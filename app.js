@@ -112,9 +112,36 @@
     });
     k.appendChild(opt('', 'Tipo de gasto…'));
     c.concepts.forEach(function (x) { k.appendChild(opt(x, x)); });
+    buildConceptTiles();
     var lp = lsGet('gx.person'); if (lp) { p.value = lp; mp.value = lp; }
     $('date').value = ''; $('date').max = todayISO(); $('date').min = '2026-11-01';
     onPersonChange();
+  }
+  /* ---------- teselas de concepto (los más usados a un toque; el resto en «Más tipos») ---------- */
+  var TOP = [['Comida', '🍽️', 'Comida'], ['Supermercado', '🛒', 'Supermercado'], ['Diésel', '⛽', 'Diésel'], ['Peajes/Parking', '🅿️', 'Peajes · Parking'], ['Hotel/Apartamentos', '🏨', 'Hotel'], ['Vuelos/Barco', '✈️', 'Vuelos · Barco'], ['Coche de alquiler', '🚗', 'Coche alquiler'], ['Material/Recambios', '🔧', 'Material'], ['Otros', '⋯', 'Otros']];
+  var conceptWired = false;
+  function buildConceptTiles() {
+    var box = $('conceptTiles'), have = {}; box.innerHTML = '';
+    Array.prototype.forEach.call($('concept').options, function (o) { have[o.value] = 1; });
+    TOP.forEach(function (t) {
+      if (!have[t[0]]) return;
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'ct'; b.dataset.v = t[0];
+      b.innerHTML = '<span class="ci">' + t[1] + '</span><span class="cl">' + esc(t[2]) + '</span>';
+      b.addEventListener('click', function () { $('concept').value = t[0]; $('concept').dispatchEvent(new Event('change')); });
+      box.appendChild(b);
+    });
+    var m = document.createElement('button'); m.type = 'button'; m.className = 'ct'; m.id = 'conceptMoreBtn';
+    m.innerHTML = '<span class="ci">＋</span><span class="cl">Más tipos</span>';
+    m.addEventListener('click', function () { $('conceptMore').hidden = !$('conceptMore').hidden; });
+    box.appendChild(m);
+    if (!conceptWired) { $('concept').addEventListener('change', syncConceptTiles); conceptWired = true; }
+    syncConceptTiles();
+  }
+  function syncConceptTiles() {
+    var v = $('concept').value, inTop = false;
+    Array.prototype.forEach.call($('conceptTiles').querySelectorAll('.ct[data-v]'), function (b) { var on = b.dataset.v === v; b.classList.toggle('on', on); if (on) inTop = true; });
+    $('conceptMoreBtn').classList.toggle('on', !!v && !inTop);
+    if (v && !inTop) $('conceptMore').hidden = false; else if (inTop) $('conceptMore').hidden = true;
   }
   function personNeedsPin(name) { var os = $('person') ? $('person').options : []; for (var i = 0; i < os.length; i++) if (os[i].value === name) return os[i].dataset.nopin !== '1'; return true; }
   function needsPin() { var o = $('person').options[$('person').selectedIndex]; return !!($('person').value && o && o.dataset.nopin !== '1'); }
@@ -316,7 +343,7 @@
   function submit(ev) {
     ev.preventDefault();
     var err = validate(), box = $('formError');
-    if (err.length) { box.textContent = err.map(function (e) { return '• ' + e[1]; }).join('\n'); box.style.whiteSpace = 'pre-line'; box.hidden = false; var el = $(err[0][0]); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    if (err.length) { box.textContent = err.map(function (e) { return '• ' + e[1]; }).join('\n'); box.style.whiteSpace = 'pre-line'; box.hidden = false; var el = $(err[0][0] === 'concept' ? 'conceptTiles' : err[0][0]); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
     box.hidden = true;
     var a = parseAmount($('amount').value);
     if (!state.clientId) state.clientId = uuid(); // se mantiene si hay que reintentar → el servidor no duplica
@@ -359,7 +386,7 @@
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
     ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate', 'irpfOther', 'mb21', 'mb10', 'mb4', 'mb0', 'mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).value = ''; if ($(i).dataset) delete $(i).dataset.manual; });
     $('ivaMulti').hidden = true;
-    $('nif').value = ''; $('concept').value = ''; $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; show('formView');
+    $('nif').value = ''; $('concept').value = ''; syncConceptTiles(); $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; show('formView');
   }
 
   /* ---------- envío de la cola ---------- */
@@ -387,30 +414,51 @@
   }
 
   /* ---------- Mis gastos ---------- */
+  var mine = { res: null, local: [], person: '', status: '', event: '' };
   function loadMine() {
     var person = $('person').value, pin = needsPin() ? $('pin').value.trim() : '', body = $('mineBody');
     if (!person || (needsPin() && !pin)) { body.innerHTML = '<p class="empty">Elige tu nombre y escribe tu PIN en «Subir gasto» para ver tus gastos.</p>'; return; }
     body.innerHTML = '<p class="empty">Cargando…</p>';
     Promise.all([api({ action: 'mine', password: state.password, person: person, pin: pin }).catch(function (e) { return { ok: false, error: e.message, network: true }; }), qAll()]).then(function (r) {
-      var res = r[0], local = r[1].filter(function (i) { return i.data.person === person; });
-      var html = '';
-      if (!res.ok) html += '<p class="warn">' + esc(res.network ? 'Sin conexión: no se puede consultar el servidor.' : res.error) + '</p>';
-      if (res.ok && res.master) html += '<p class="muted small" style="margin-bottom:8px">Consulta con PIN maestro: estás viendo los gastos de ' + esc(res.person) + '.</p>';
-      else if (res.reimbursable) html += '<div class="tiles"><div class="tile main full"><small>' + (res.supplier ? 'Pendiente de pago a proveedores' : 'Pendiente de cobro') + '</small><b>' + fmt(res.pending) + ' €</b></div><div class="tile"><small>Ya liquidado</small><b>' + fmt(res.paid) + ' €</b></div><div class="tile"><small>Total subido</small><b>' + fmt(res.total) + ' €</b></div></div>';
-      else html += '<div class="tiles"><div class="tile main full"><small>Pagado con la tarjeta del club (no se liquida)</small><b>' + fmt(res.total) + ' €</b></div></div>';
-      var items = [];
-      local.forEach(function (i) { items.push('<li><span class="t">' + esc(i.info.label) + '</span><span class="a">' + fmt(i.data.amount) + ' €</span><span class="s">' + esc(i.data.concept) + ' · ' + esc(i.data.date) + '</span><span class="s" style="text-align:right"><span class="pill local">Sin enviar</span></span></li>'); });
-      if (res.ok) res.items.forEach(function (i) {
-        var cls = i.status === 'Pendiente' ? 'pend' : (i.status === 'Liquidado' ? 'paid' : ''), extra = i.status === 'Liquidado' && i.paidOn ? ' · ' + esc(i.paidOn) : '';
-        items.push('<li><span class="t">' + esc(i.event) + '</span><span class="a">' + fmt(i.amount) + ' €</span><span class="s">' + esc(i.concept) + (i.supplier ? ' · ' + esc(i.supplier) : '') + ' · ' + esc(i.date) + (i.irpf ? ' · IRPF −' + fmt(i.irpf) + ' € (neto ' + fmt(i.net) + ' €)' : '') + '</span><span class="s" style="text-align:right"><span class="pill ' + cls + '">' + esc(i.status) + '</span>' + extra + '</span></li>');
-      });
-      html += items.length ? '<ul class="items">' + items.join('') + '</ul>' : (res.ok ? '<p class="empty">Todavía no hay gastos de ' + esc(person) + '.</p>' : '');
-      body.innerHTML = html;
+      if (mine.person !== person) { mine.status = ''; mine.event = ''; }
+      mine.person = person; mine.res = r[0]; mine.local = r[1].filter(function (i) { return i.data.person === person; });
+      renderMine();
     });
+  }
+  function renderMine() {
+    var res = mine.res, person = mine.person, body = $('mineBody'), html = '';
+    if (!res.ok) html += '<p class="warn">' + esc(res.network ? 'Sin conexión: no se puede consultar el servidor.' : res.error) + '</p>';
+    if (res.ok && res.master) html += '<p class="muted small" style="margin-bottom:8px">Consulta con PIN maestro: estás viendo los gastos de ' + esc(res.person) + '.</p>';
+    else if (res.reimbursable) html += '<div class="tiles"><div class="tile main full"><small>' + (res.supplier ? 'Pendiente de pago a proveedores' : 'Pendiente de cobro') + '</small><b>' + fmt(res.pending) + ' €</b></div><div class="tile"><small>Ya liquidado</small><b>' + fmt(res.paid) + ' €</b></div><div class="tile"><small>Total subido</small><b>' + fmt(res.total) + ' €</b></div></div>';
+    else html += '<div class="tiles"><div class="tile main full"><small>Pagado con la tarjeta del club (no se liquida)</small><b>' + fmt(res.total) + ' €</b></div></div>';
+    var all = [];
+    mine.local.forEach(function (i) { all.push({ event: i.info.label, status: 'Sin enviar', amount: Number(i.data.amount) || 0, li: '<li><span class="t">' + esc(i.info.label) + '</span><span class="a">' + fmt(i.data.amount) + ' €</span><span class="s">' + esc(i.data.concept) + ' · ' + esc(i.data.date) + '</span><span class="s" style="text-align:right"><span class="pill local">Sin enviar</span></span></li>' }); });
+    if (res.ok) res.items.forEach(function (i) {
+      var cls = i.status === 'Pendiente' ? 'pend' : (i.status === 'Liquidado' ? 'paid' : ''), extra = i.status === 'Liquidado' && i.paidOn ? ' · ' + esc(i.paidOn) : '';
+      all.push({ event: i.event, status: i.status, amount: Number(i.amount) || 0, li: '<li><span class="t">' + esc(i.event) + '</span><span class="a">' + fmt(i.amount) + ' €</span><span class="s">' + esc(i.concept) + (i.supplier ? ' · ' + esc(i.supplier) : '') + ' · ' + esc(i.date) + (i.irpf ? ' · IRPF −' + fmt(i.irpf) + ' € (neto ' + fmt(i.net) + ' €)' : '') + '</span><span class="s" style="text-align:right"><span class="pill ' + cls + '">' + esc(i.status) + '</span>' + extra + '</span></li>' });
+    });
+    if (!all.length) { body.innerHTML = html + (res.ok ? '<p class="empty">Todavía no hay gastos de ' + esc(person) + '.</p>' : ''); return; }
+    var sts = [], evs = [];
+    all.forEach(function (x) { if (sts.indexOf(x.status) < 0) sts.push(x.status); if (evs.indexOf(x.event) < 0) evs.push(x.event); });
+    if (sts.indexOf(mine.status) < 0) mine.status = '';
+    if (evs.indexOf(mine.event) < 0) mine.event = '';
+    html += '<div class="chips">' + ['Todos'].concat(sts).map(function (s2) { var v = s2 === 'Todos' ? '' : s2; return '<button type="button" class="chip' + (mine.status === v ? ' on' : '') + '" data-st="' + esc(v) + '">' + esc(s2) + '</button>'; }).join('') + '</div>';
+    if (evs.length > 1) html += '<select id="mineEvent" class="mine-ev"><option value="">Todos los eventos</option>' + evs.map(function (e2) { return '<option value="' + esc(e2) + '"' + (mine.event === e2 ? ' selected' : '') + '>' + esc(e2) + '</option>'; }).join('') + '</select>';
+    var shown = all.filter(function (x) { return (!mine.status || x.status === mine.status) && (!mine.event || x.event === mine.event); });
+    var tot = shown.reduce(function (a, x) { return a + x.amount; }, 0);
+    html += '<p class="mine-sum">' + shown.length + ' gasto' + (shown.length === 1 ? '' : 's') + ' · <b>' + fmt(tot) + ' €</b>' + ((mine.status || mine.event) ? ' <span class="muted">(filtrado)</span>' : '') + '</p>';
+    html += shown.length ? '<ul class="items">' + shown.map(function (x) { return x.li; }).join('') + '</ul>' : '<p class="empty">Ningún gasto con ese filtro.</p>';
+    body.innerHTML = html;
+    Array.prototype.forEach.call(body.querySelectorAll('.chip'), function (b) { b.addEventListener('click', function () { mine.status = b.dataset.st; renderMine(); }); });
+    var se = $('mineEvent'); if (se) se.addEventListener('change', function () { mine.event = se.value; renderMine(); });
   }
 
   /* ---------- servidor simulado (solo ?mock=1) ---------- */
-  var mockDb = [];
+  var mockDb = /[?&]seed=1/.test(location.search) ? [ // datos de ejemplo solo en modo demo (?mock=1&seed=1)
+    { id: 'D1', clientId: 'a', reimb: true, date: '2026-11-05', event: 'Leyenda de Tartessos · 21–24 ene', concept: 'Diésel', supplier: 'Repsol', amount: 14, person: 'Persona A', status: 'Liquidado' },
+    { id: 'D2', clientId: 'b', reimb: true, date: '2026-11-11', event: 'Leyenda de Tartessos · 21–24 ene', concept: 'Hotel/Apartamentos', supplier: 'Hotel Sol', amount: 186.16, person: 'Persona A', status: 'Pendiente' },
+    { id: 'D3', clientId: 'c', reimb: true, date: '2026-11-18', event: 'Mediterranean Epic · 4 feb', concept: 'Comida', supplier: 'Bar Pepe', amount: 42.5, person: 'Persona A', status: 'Pendiente' },
+    { id: 'D4', clientId: 'd', reimb: true, date: '2026-11-20', event: 'Mediterranean Epic · 4 feb', concept: 'Peajes/Parking', supplier: '', amount: 9.8, person: 'Persona A', status: 'Liquidado' }] : [];
   function mockApi(body) {
     return new Promise(function (res, rej) {
       setTimeout(function () {
