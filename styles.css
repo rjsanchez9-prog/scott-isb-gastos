@@ -100,3 +100,26 @@ label.first{margin-top:0}
 .mine-sum{margin:2px 4px 10px;font-size:15px}
 
 .pill.warnx{color:var(--danger);border-color:var(--danger);white-space:normal}
+
+/* lectura automática del papel (foto primero) */
+label.sub{font-weight:500;margin:0 0 6px}
+.num.done{background:#2f7a52}
+.aicard{background:rgba(79,134,142,.16);border:1px solid var(--brand);border-radius:16px;padding:14px 16px;margin-bottom:14px}
+.aicard h2{margin:0 0 6px;font-size:17px;display:flex;align-items:center;gap:8px}
+.aicard p{margin:6px 0 0;font-size:14px}
+.aicard ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px;font-size:15px}
+.aicard li b{color:var(--brand-light);font-weight:600;margin-right:4px}
+.aicard .aiwarn{color:var(--warn)}
+.aicard .aiact{display:flex;gap:8px;margin-top:12px}
+.aicard .aiact button{flex:1;min-height:44px;border-radius:12px;border:1.5px solid var(--brand);background:transparent;color:var(--text);font:inherit;font-weight:700;font-size:15px;cursor:pointer}
+.aicard .aiact button.main{background:var(--brand);color:#fff}
+.aispin{width:18px;height:18px;border-radius:50%;border:3px solid var(--brand-dark);border-top-color:var(--brand-light);animation:r 1s linear infinite;flex:0 0 auto}
+.aicard.soft{background:var(--card);border-color:var(--line)}
+.aitags{display:inline-block;font-weight:600}
+.aitags:empty{display:none}
+.ai-tag,.ai-doubt{display:inline-block;margin-left:4px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle;white-space:nowrap}
+.ai-tag{color:var(--brand-light);border:1px solid var(--brand)}
+.ai-doubt{color:var(--warn);border:1px solid var(--warn);background:rgba(255,214,110,.1)}
+.ai-warn{border-color:var(--warn)!important;box-shadow:0 0 0 2px rgba(255,214,110,.28)}
+.ctiles.ai-warn{border:1.5px solid var(--warn);border-radius:16px;padding:6px}
+#stepPhoto .btn{padding:0 8px;font-size:15px;white-space:nowrap}

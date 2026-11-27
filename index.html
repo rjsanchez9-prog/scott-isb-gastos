@@ -49,40 +49,55 @@
     <section id="formView" class="view" hidden>
       <form id="expenseForm" novalidate autocomplete="off">
 
-        <div class="card">
-          <div class="step"><span class="num">1</span><label for="person">Persona</label></div>
+        <!-- PASO 1: foto o archivo del papel (lo primero; si hay lectura automática rellena el resto) -->
+        <div class="card" id="stepPhoto">
+          <div class="step"><span class="num" data-n="1">1</span><label>Foto o archivo del papel</label></div>
+          <p class="muted small" style="margin:0 0 10px">Haz una foto del papel entero y nítida. Si hay lectura automática, te rellenará el resto.</p>
+          <div class="row">
+            <button type="button" id="btnCamera" class="btn ghost">📷 Hacer foto</button>
+            <button type="button" id="btnGallery" class="btn ghost">🖼️ Galería / archivo</button>
+          </div>
+          <input id="fileCamera" type="file" accept="image/*" capture="environment" hidden>
+          <input id="fileGallery" type="file" accept="image/*,application/pdf" multiple hidden>
+          <ul id="thumbs" class="thumbs"></ul>
+          <p id="fileWarn" class="warn" hidden></p>
+        </div>
+
+        <!-- Lectura automática: estado y resumen de lo leído -->
+        <div id="aiCard" class="aicard" hidden role="status" aria-live="polite"></div>
+
+        <div class="card" id="stepWho">
+          <div class="step"><span class="num" id="num2" data-n="2">2</span><label for="person">Quién y qué evento</label></div>
+          <label class="sub" for="person">Persona</label>
           <select id="person" required></select>
           <p id="personNote" class="note" hidden></p>
           <div id="pinBox" hidden style="margin-top:12px">
-            <span class="sub">Tu PIN personal</span>
+            <label class="sub" for="pin">Tu PIN personal</label>
             <input id="pin" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" maxlength="12" placeholder="PIN de 6 cifras">
             <p id="pinStatus" class="muted small" style="margin-top:6px"></p>
           </div>
-        </div>
-
-        <div class="card">
-          <div class="step"><span class="num">2</span><label for="event">Evento</label></div>
+          <label class="sub" for="event" style="margin-top:14px">Evento</label>
           <select id="event" required></select>
           <p id="eventHint" class="muted small" hidden style="margin:8px 0 0">Último evento que usaste: cámbialo si no es el de este gasto.</p>
         </div>
 
-        <div class="card">
-          <div class="step"><span class="num">3</span><label for="date">Fecha e importe</label></div>
+        <div class="card" id="stepDate">
+          <div class="step"><span class="num" data-n="3">3</span><label for="date">Fecha e importe</label></div>
           <p class="muted small" style="margin:0 0 8px">Pon la <b>fecha que figura en la factura o ticket</b>, no la de hoy. Si juntas varios, súbelos uno a uno, cada uno con su fecha.</p>
           <div class="row">
             <div class="col">
-              <span class="sub">Fecha de la factura</span>
+              <span class="sub">Fecha de la factura <span class="aitags" data-f="date"></span></span>
               <input id="date" type="date" required>
             </div>
             <div class="col">
-              <span class="sub" id="amountLabel">Importe IVA incluido</span>
+              <span class="sub"><span id="amountLabel">Importe IVA incluido</span> <span class="aitags" data-f="amount"></span></span>
               <div class="money"><input id="amount" type="text" inputmode="decimal" placeholder="0,00" required><b>€</b></div>
             </div>
           </div>
         </div>
 
-        <div class="card">
-          <div class="step"><span class="num">4</span><label for="concept">Concepto</label></div>
+        <div class="card" id="stepConcept">
+          <div class="step"><span class="num" data-n="4">4</span><label>Concepto <span class="aitags" data-f="concept"></span></label></div>
           <div id="conceptTiles" class="ctiles"></div>
           <div id="conceptMore" hidden><select id="concept"></select></div>
           <div id="forWhomBox" hidden>
@@ -92,11 +107,11 @@
           </div>
         </div>
 
-        <div class="card">
-          <div class="step"><span class="num">5</span><label>IVA y titular de la factura</label></div>
+        <div class="card" id="stepIva">
+          <div class="step"><span class="num" data-n="5">5</span><label>IVA y titular de la factura</label></div>
           <div class="row">
             <div class="col">
-              <span class="sub">Tipo de IVA</span>
+              <span class="sub">Tipo de IVA <span class="aitags" data-f="iva"></span></span>
               <select id="ivaRate" required>
                 <option value="">Elige…</option>
                 <option value="21">21 %</option>
@@ -107,7 +122,7 @@
               </select>
             </div>
             <div class="col" id="inClubBox">
-              <span class="sub">¿A nombre del club?</span>
+              <span class="sub">¿A nombre del club? <span class="aitags" data-f="inClub"></span></span>
               <select id="inClub" required>
                 <option value="">Elige…</option>
                 <option>Sí</option>
@@ -145,36 +160,27 @@
           <p id="inClubHelp" class="muted small">Míralo en la factura: debe figurar <b>C.D. Probikes Morón</b> como cliente. Si es un ticket sin nombre, elige <b>No</b>.</p>
         </div>
 
-        <div class="card">
-          <div class="step"><span class="num">6</span><label>Factura o ticket</label></div>
-          <label for="docType">¿Qué has recibido?</label>
+        <div class="card" id="stepDoc">
+          <div class="step"><span class="num" data-n="6">6</span><label for="docType">Factura o ticket</label></div>
+          <label class="sub" for="docType">¿Qué has recibido? <span class="aitags" data-f="docType"></span></label>
           <select id="docType" required>
             <option value="">Elige…</option>
             <option>Factura completa</option>
             <option>Ticket / factura simplificada</option>
           </select>
           <p class="muted small">Una <b>factura completa</b> lleva los datos fiscales de quien la emite (razón social y NIF). Un <b>ticket</b> solo trae establecimiento e importe.</p>
-          <p class="muted small" style="margin-top:12px">Foto <b>nítida y completa</b>: que se lea proveedor, fecha, NIF e importe.</p>
-          <div class="row">
-            <button type="button" id="btnCamera" class="btn ghost">📷 Hacer foto</button>
-            <button type="button" id="btnGallery" class="btn ghost">🖼️ Galería / archivo</button>
-          </div>
-          <input id="fileCamera" type="file" accept="image/*" capture="environment" hidden>
-          <input id="fileGallery" type="file" accept="image/*,application/pdf" multiple hidden>
-          <ul id="thumbs" class="thumbs"></ul>
-          <p id="fileWarn" class="warn" hidden></p>
         </div>
 
         <details class="card more" id="more">
           <summary id="moreSum">Más datos (opcional)</summary>
-          <label for="supplier" id="lblSupplier">Establecimiento (opcional)</label>
+          <label for="supplier"><span id="lblSupplier">Establecimiento (opcional)</span> <span class="aitags" data-f="supplier"></span></label>
           <input id="supplier" type="text" placeholder="Ej. Repsol, Hotel Girona…" autocomplete="off">
           <div id="nifBox" hidden>
-            <label for="nif">NIF / CIF del emisor</label>
+            <label for="nif">NIF / CIF del emisor <span class="aitags" data-f="nif"></span></label>
             <input id="nif" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ej. B12345678 (o identificador extranjero con prefijo de país)">
             <p id="nifStatus" class="muted small" style="margin-top:6px"></p>
           </div>
-          <label for="docNumber" id="lblDocNumber">Nº de ticket (opcional)</label>
+          <label for="docNumber"><span id="lblDocNumber">Nº de ticket (opcional)</span> <span class="aitags" data-f="docNumber"></span></label>
           <input id="docNumber" type="text" autocomplete="off">
           <label for="notes">Notas</label>
           <textarea id="notes" rows="2" placeholder="Algo que debamos saber…"></textarea>

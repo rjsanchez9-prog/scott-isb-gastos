@@ -5,9 +5,10 @@
   'use strict';
   var CFG = window.CONFIG || {};
   var MOCK = /[?&]mock=1/.test(location.search) || CFG.backendUrl === 'MOCK';
-  var MAX_FILES = 4, MAX_PDF_MB = 7, BLUR_THRESHOLD = 200, TIMEOUT_MS = 60000;
+  var MAX_FILES = 4, MAX_PDF_MB = 7, BLUR_THRESHOLD = 200, TIMEOUT_MS = 60000, AI_DEBOUNCE = 900;
   var $ = function (id) { return document.getElementById(id); };
   var state = { password: '', pins: {}, salary: false, config: null, files: [], force: false, clientId: '', offline: false, flushing: false, again: false, eventManual: false, ivaAuto: false, clubAuto: false, clubPrev: '' };
+  var ai = { seq: 0, timer: null, touched: {}, tag: {}, doubt: {}, view: 'none', data: null, filling: false }; // lectura automática del papel
 
   /* ---------- utilidades ---------- */
   function toast(msg) { var t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(function () { t.hidden = true; }, 4000); }
@@ -116,7 +117,7 @@
     buildConceptTiles();
     var lp = lsGet('gx.person'); if (lp) { p.value = lp; mp.value = lp; }
     $('date').value = ''; $('date').max = todayISO(); $('date').min = '2026-11-01';
-    onPersonChange();
+    aiReset(); onPersonChange();
   }
   /* ---------- teselas de concepto (los más usados a un toque; el resto en «Más tipos») ---------- */
   var TOP = [['Comida', '🍽️', 'Comida'], ['Supermercado', '🛒', 'Supermercado'], ['Diésel', '⛽', 'Diésel'], ['Peajes/Parking', '🅿️', 'Peajes · Parking'], ['Hotel/Apartamentos', '🏨', 'Hotel'], ['Vuelos/Barco', '✈️', 'Vuelos · Barco'], ['Coche de alquiler', '🚗', 'Coche alquiler'], ['Material/Recambios', '🔧', 'Material'], ['Otros', '⋯', 'Otros']];
@@ -154,6 +155,11 @@
     applyEvent();
     $('pinBox').hidden = !needsPin(); $('pin').value = needsPin() ? (state.pins[sel.value] || (sel.value !== 'José María Sánchez' && state.mpin) || '') : ''; state.salary = false; $('pinStatus').textContent = '';
     if (needsPin() && $('pin').value) verifyPin();
+    updateStep2();
+  }
+  function updateStep2() { // el paso 2 se marca como hecho cuando ya hay persona, PIN (si hace falta) y evento
+    var n = $('num2'), ok = !!($('person').value && $('event').value && (!needsPin() || $('pin').value.trim()));
+    n.classList.toggle('done', ok); n.textContent = ok ? '✔' : '2';
   }
   var HON = 'Honorarios profesionales';
   function irpfValue() {
@@ -217,7 +223,7 @@
     else if (state.ivaAuto) { sel.value = ''; state.ivaAuto = false; n.hidden = true; n.textContent = ''; }
   }
   function onConceptChange() { suggestIva(); updateIva(); }
-  function onIvaChange() { state.ivaAuto = false; $('ivaSuggest').hidden = true; updateIva(); } // cambio hecho por la persona
+  function onIvaChange() { state.ivaAuto = false; $('ivaSuggest').hidden = true; aiTouch('iva'); updateIva(); } // cambio hecho por la persona
 
   /* ---------- varios tipos de IVA (supermercado…) ---------- */
   var RATES = [21, 10, 4, 0];
@@ -288,7 +294,7 @@
         }
         return processImage(f).then(function (x) { state.files.push(x); }).catch(function () { toast('No se pudo leer "' + f.name + '"'); });
       });
-    }, Promise.resolve()).then(function () { busy(false); renderThumbs(); });
+    }, Promise.resolve()).then(function () { busy(false); renderThumbs(); aiFilesChanged(); });
   }
   function renderThumbs() {
     var ul = $('thumbs'); ul.innerHTML = ''; var blurry = false;
@@ -302,7 +308,7 @@
       meta.appendChild(b); meta.appendChild(sp);
       if (isBlur) { var s = document.createElement('span'); s.className = 'blur'; s.textContent = 'parece borrosa'; meta.appendChild(s); }
       var rm = document.createElement('button'); rm.type = 'button'; rm.setAttribute('aria-label', 'Quitar'); rm.textContent = '✕';
-      rm.onclick = function () { state.files.splice(i, 1); renderThumbs(); };
+      rm.onclick = function () { state.files.splice(i, 1); renderThumbs(); aiFilesChanged(); };
       li.appendChild(vis); li.appendChild(meta); li.appendChild(rm); ul.appendChild(li);
     });
     var w = $('fileWarn'); if (blurry) { w.textContent = 'Alguna foto parece borrosa. Repítela con buena luz y el papel plano: la factura debe leerse bien.'; w.hidden = false; } else w.hidden = true;
@@ -351,9 +357,145 @@
     var r = nifCheck(v); el.textContent = r.error ? '✖ ' + r.error : '✔ ' + r.nif;
   }
 
+  /* ---------- lectura automática del papel (IA): solo ayuda a rellenar, nunca guarda nada ---------- */
+  var AI_FIELDS = { date: ['date'], amount: ['amount'], concept: ['conceptTiles'], iva: ['ivaRate'], inClub: ['inClub'], docType: ['docType'], supplier: ['supplier'], nif: ['nif'], docNumber: ['docNumber'] };
+  var AI_TAG = '<span class="ai-tag">✨ leído de la foto</span>', AI_DOUBT = '<span class="ai-doubt">⚠ revísalo</span>';
+  var AI_DOUBT_KEYS = [[/nif|cif|identificaci/i, 'nif'], [/fecha/i, 'date'], [/total|importe|suma/i, 'amount'], [/iva|cuota|base|impositiv/i, 'iva'], [/n[uú]mero|\bn[ºo°]/i, 'docNumber'], [/proveedor|emisor|raz[oó]n|establecimiento/i, 'supplier'], [/tipo de documento|simplificada|completa/i, 'docType'], [/a nombre|club|titular|cliente/i, 'inClub'], [/concepto/i, 'concept']];
+  function aiAvailable() { return !!(state.config && state.config.ai === true) && !state.offline && navigator.onLine !== false; }
+  function aiRenderMarks() {
+    Object.keys(AI_FIELDS).forEach(function (f) {
+      var box = document.querySelector('.aitags[data-f="' + f + '"]');
+      if (box) box.innerHTML = (ai.tag[f] ? AI_TAG : '') + (ai.doubt[f] ? AI_DOUBT : '');
+      AI_FIELDS[f].forEach(function (id) { $(id).classList.toggle('ai-warn', !!ai.doubt[f]); });
+    });
+  }
+  function aiTouch(f) { // la persona ha tocado el campo: la lectura ya no lo pisa y desaparecen sus marcas
+    if (ai.filling) return;
+    ai.touched[f] = true;
+    if (ai.tag[f] || ai.doubt[f]) { ai.tag[f] = false; ai.doubt[f] = false; aiRenderMarks(); }
+  }
+  function aiReset() { clearTimeout(ai.timer); ai.seq++; ai.touched = {}; ai.tag = {}; ai.doubt = {}; ai.view = 'none'; ai.data = null; aiRenderMarks(); aiRenderCard(); }
+  function aiFilesChanged() { // al añadir o quitar archivos se vuelve a leer; la respuesta de una lectura anterior se ignora
+    clearTimeout(ai.timer); ai.seq++;
+    if (!state.files.length) { ai.view = 'none'; ai.tag = {}; ai.doubt = {}; aiRenderMarks(); aiRenderCard(); return; }
+    if (!aiAvailable()) { if (ai.view === 'reading') ai.view = 'none'; aiRenderCard(); return; }
+    ai.view = 'reading'; aiRenderCard();
+    var my = ai.seq; ai.timer = setTimeout(function () { aiRead(my); }, AI_DEBOUNCE);
+  }
+  function aiRead(my) {
+    var files = state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; });
+    api({ action: 'extract', password: state.password, files: files }).then(function (res) {
+      if (my !== ai.seq) return; // llegó tarde: ya hay otra lectura o se ha cambiado el papel
+      if (!res || !res.ok || !res.data) { ai.view = 'down'; aiRenderCard(); return; }
+      ai.data = res.data;
+      if (res.data.legible === false) { ai.view = 'illegible'; aiRenderCard(); return; }
+      aiApply(res.data); ai.view = 'summary'; aiRenderCard();
+    }).catch(function (e) { if (window.console && !(e && e.network)) console.error('[lectura]', e); if (my === ai.seq) { ai.view = 'down'; aiRenderCard(); } });
+  }
+  function aiMoney(n) { return (Math.round(n * 100) / 100).toFixed(2).replace('.', ','); }
+  function aiIsEur(d) { var m = String(d.moneda == null || d.moneda === '' ? 'EUR' : d.moneda).trim().toUpperCase(); return m === 'EUR' || m === '€'; }
+  function aiClearMulti() { ['mb21', 'mb10', 'mb4', 'mb0', 'mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).value = ''; delete $(i).dataset.manual; }); }
+  function aiApply(d) { // rellena SOLO lo que la persona no ha tocado a mano; nunca persona, PIN ni evento
+    var T = ai.touched, old = ai.tag, tag = {}, dbt = {}, cfg = state.config || {};
+    ai.filling = true;
+    try {
+      // concepto: solo si aún no está elegido (o lo puso una lectura anterior)
+      var cc = (d.concepto && (cfg.concepts || []).indexOf(d.concepto) >= 0) ? d.concepto : '';
+      if (!T.concept) {
+        if (cc && (!$('concept').value || old.concept)) { $('concept').value = cc; syncConceptTiles(); onConceptChange(); tag.concept = true; }
+        else if (old.concept) tag.concept = true;
+      }
+      // tipo de documento
+      if (!T.docType) {
+        var dt = (d.tipoDocumento === 'Factura completa' || d.tipoDocumento === 'Ticket / factura simplificada') ? d.tipoDocumento : '';
+        if (dt) { $('docType').value = dt; updateDoc(); tag.docType = true; } else if (old.docType) { $('docType').value = ''; updateDoc(); }
+      }
+      // IVA (un tipo, o «Varios tipos» con la base y la cuota de cada uno)
+      if (!T.iva) {
+        var by = {}, rows = [];
+        (Array.isArray(d.iva) ? d.iva : []).forEach(function (r) {
+          var t = r && Number(r.tipo); if (!r || RATES.indexOf(t) < 0) return;
+          var o = by[t] || (by[t] = { t: t, b: 0, c: 0, hasB: false, hasC: false });
+          if (isFinite(Number(r.base)) && r.base != null && Number(r.base) > 0) { o.b += Number(r.base); o.hasB = true; }
+          if (isFinite(Number(r.cuota)) && r.cuota != null && Number(r.cuota) > 0) { o.c += Number(r.cuota); o.hasC = true; }
+        });
+        RATES.forEach(function (t) { if (by[t]) rows.push(by[t]); });
+        if (rows.length === 1) {
+          aiClearMulti(); $('ivaRate').value = String(rows[0].t); state.ivaAuto = false; $('ivaSuggest').hidden = true; tag.iva = true;
+        } else if (rows.length >= 2 && rows.filter(function (r) { return r.hasB; }).length >= 2) {
+          aiClearMulti(); $('ivaRate').value = 'multi'; state.ivaAuto = false; $('ivaSuggest').hidden = true; tag.iva = true;
+          rows.forEach(function (r) { if (!r.hasB) return; $('mb' + r.t).value = aiMoney(r.b); if (r.t !== 0 && r.hasC) { $('mc' + r.t).value = aiMoney(r.c); $('mc' + r.t).dataset.manual = '1'; } });
+        } else if (old.iva) { aiClearMulti(); $('ivaRate').value = ''; state.ivaAuto = false; suggestIva(); } // sin desglose: se queda como estaba (o el sugerido del concepto)
+      }
+      // ¿a nombre del club? (un ticket nunca lo está: lo fija updateDoc)
+      if (!T.inClub) {
+        if (d.aNombreDelClub === true && $('docType').value === 'Factura completa') { $('inClub').value = 'Sí'; tag.inClub = true; }
+        else if (d.aNombreDelClub === false && !isTicket()) { $('inClub').value = 'No'; tag.inClub = true; }
+        else if (old.inClub && !isTicket()) $('inClub').value = '';
+      }
+      // fecha
+      if (!T.date) {
+        var dd = /^\d{4}-\d{2}-\d{2}$/.test(String(d.fecha || '')) && d.fecha >= $('date').min && d.fecha <= $('date').max ? d.fecha : '';
+        if (dd) { $('date').value = dd; tag.date = true; } else if (old.date) $('date').value = '';
+      }
+      // importe (con coma decimal); si no está en euros no se rellena
+      if (!T.amount) {
+        var tot = Number(d.total);
+        if (aiIsEur(d) && d.total != null && isFinite(tot) && tot > 0) { $('amount').value = aiMoney(tot); tag.amount = true; } else if (old.amount) $('amount').value = '';
+      }
+      // proveedor, NIF y nº de documento
+      [['supplier', 'supplier', d.proveedor, 120], ['nif', 'nif', d.nifEmisor, 30], ['docNumber', 'docNumber', d.numeroDocumento, 60]].forEach(function (x) {
+        if (T[x[0]]) return;
+        var v = String(x[2] == null ? '' : x[2]).trim().slice(0, x[3]); if (x[0] === 'nif') v = v.toUpperCase();
+        if (v) { $(x[1]).value = v; tag[x[0]] = true; } else if (old[x[0]]) $(x[1]).value = '';
+      });
+      updateIva(); updateNif();
+      // dudas del servidor → campos a revisar
+      (Array.isArray(d.dudas) ? d.dudas : []).forEach(function (t) { AI_DOUBT_KEYS.forEach(function (k) { if (k[0].test(String(t))) dbt[k[1]] = true; }); });
+      if (d.nifValido === false && d.nifEmisor) dbt.nif = true;
+      // obligatorios que han quedado vacíos
+      var fact = $('docType').value === 'Factura completa';
+      var empty = { date: !$('date').value, amount: isNaN(parseAmount($('amount').value)), concept: !$('concept').value, iva: !$('ivaRate').value, docType: !$('docType').value,
+        inClub: !isTicket() && !$('inClub').value, supplier: fact && $('supplier').value.trim().length < 2, docNumber: fact && !$('docNumber').value.trim(), nif: fact && !!nifCheck($('nif').value).error };
+      Object.keys(empty).forEach(function (f) { if (empty[f]) dbt[f] = true; });
+    } finally { ai.filling = false; }
+    Object.keys(T).forEach(function (f) { delete tag[f]; delete dbt[f]; });
+    ai.tag = tag; ai.doubt = dbt; aiRenderMarks();
+  }
+  function aiRenderCard() {
+    var c = $('aiCard'), d = ai.data, h = '', btns = '<div class="aiact"><button type="button" data-act="reread">Volver a leer</button><button type="button" class="main" data-act="ok">Entendido</button></div>';
+    if (ai.view === 'none') { c.hidden = true; c.innerHTML = ''; return; }
+    c.className = 'aicard';
+    if (ai.view === 'reading') h = '<h2><span class="aispin"></span>✨ Leyendo el papel…</h2><p>Puedes ir rellenando; lo que lea se pondrá solo en lo que no hayas tocado.</p>';
+    else if (ai.view === 'illegible') { c.className = 'aicard soft'; h = '<p class="aiwarn" style="margin:0">No he conseguido leer el papel. Prueba con una foto más nítida y sin sombras, o rellénalo a mano.</p>' + btns; }
+    else if (ai.view === 'down') { c.className = 'aicard soft'; h = '<p style="margin:0">La lectura automática no está disponible ahora: rellénalo a mano.</p>' + btns; }
+    else if (ai.view === 'summary' && d) {
+      var eur = aiIsEur(d), ds = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d.fecha || '')), tot = Number(d.total), none = '<span class="muted">no se lee</span>';
+      h = '<h2>✨ Esto he leído de tu papel</h2><ul>'
+        + '<li><b>Proveedor</b>' + (d.proveedor ? esc(d.proveedor) : none) + '</li>'
+        + '<li><b>Fecha</b>' + (ds ? ds[3] + '/' + ds[2] + '/' + ds[1] : none) + '</li>'
+        + '<li><b>Importe</b>' + (d.total != null && isFinite(tot) && tot > 0 ? (eur ? fmt(tot) + ' €' : esc(fmt(tot) + ' ' + d.moneda) + ' <span class="muted">(sin rellenar)</span>') : none) + '</li></ul>';
+      if (!eur) h += '<p class="aiwarn">El importe parece estar en ' + esc(d.moneda) + '. Los gastos en otra divisa los anota administración: avísame</p>';
+      (Array.isArray(d.dudas) ? d.dudas : []).slice(0, 3).forEach(function (t) { h += '<p class="aiwarn">⚠ ' + esc(t) + '</p>'; });
+      if (Object.keys(ai.doubt).some(function (f) { return ai.doubt[f]; })) h += '<p class="aiwarn">Revisa lo que está marcado con «revísalo» antes de enviar.</p>';
+      h += btns;
+    } else { c.hidden = true; c.innerHTML = ''; return; }
+    c.innerHTML = h; c.hidden = false;
+  }
+  function aiCardClick(ev) {
+    var b = ev.target.closest ? ev.target.closest('button[data-act]') : null; if (!b) return;
+    if (b.dataset.act === 'ok') { ai.view = 'none'; aiRenderCard(); return; }
+    if (b.dataset.act === 'reread') {
+      if (!state.files.length) return;
+      if (!aiAvailable()) { toast('Sin cobertura: la lectura automática necesita conexión'); return; }
+      clearTimeout(ai.timer); ai.seq++; ai.view = 'reading'; aiRenderCard(); aiRead(ai.seq);
+    }
+  }
+
   /* ---------- envío ---------- */
   function validate() {
     var err = [], a = parseAmount($('amount').value);
+    if (!state.files.length) err.push(['btnCamera', 'Haz la foto o adjunta el archivo del papel']);
     if (!$('person').value) err.push(['person', 'Elige la persona']);
     if (needsPin() && !$('pin').value.trim()) err.push(['pin', 'Escribe tu PIN personal']);
     else if (needsPin() && state.mpin && $('person').value !== 'José María Sánchez' && $('pin').value.trim() === state.mpin) err.push(['pin', 'Ese es el PIN maestro: solo sirve para consultar. Para subir un gasto a nombre de esta persona hace falta su propio PIN']);
@@ -374,14 +516,14 @@
       if (!$('docNumber').value.trim()) err.push(['docNumber', 'Indica el nº de factura']);
       var nv = nifCheck($('nif').value); if (nv.error) err.push(['nif', nv.error]);
     }
-    if (!state.files.length) err.push(['btnCamera', 'Adjunta la foto de la factura o ticket']);
     return err;
   }
+  var STEP_OF = { btnCamera: 1, person: 2, pin: 2, event: 2, date: 3, amount: 3, concept: 4, ivaRate: 5, mb21: 5, inClub: 5, irpfRate: 5, irpfOther: 5, docType: 6, supplier: 6, docNumber: 6, nif: 6 };
   function eventLabel() { return $('event').options[$('event').selectedIndex].textContent; }
   function submit(ev) {
     ev.preventDefault();
     var err = validate(), box = $('formError');
-    if (err.length) { box.textContent = err.map(function (e) { return '• ' + e[1]; }).join('\n'); box.style.whiteSpace = 'pre-line'; box.hidden = false; var el = $(err[0][0] === 'concept' ? 'conceptTiles' : err[0][0]); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    if (err.length) { box.textContent = err.map(function (e) { return '• ' + e[1] + (STEP_OF[e[0]] ? ' (paso ' + STEP_OF[e[0]] + ')' : ''); }).join('\n'); box.style.whiteSpace = 'pre-line'; box.hidden = false; var el = $(err[0][0] === 'concept' ? 'conceptTiles' : err[0][0]); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
     box.hidden = true;
     var a = parseAmount($('amount').value);
     if (!state.clientId) state.clientId = uuid(); // se mantiene si hay que reintentar → el servidor no duplica
@@ -410,6 +552,7 @@
     return qPut(item).then(function () { state.clientId = ''; done(info, info.reimb, true); renderQueue(); });
   }
   function done(info, reimb, local, auto) {
+    clearTimeout(ai.timer); ai.seq++; // ya no hace falta ninguna lectura pendiente
     rememberEvent(info.who, info.eventId);
     $('doneIcon').textContent = local ? '⏳' : '✔';
     $('doneTitle').textContent = local ? 'Guardado en el móvil' : 'Gasto guardado';
@@ -421,12 +564,12 @@
     n.hidden = false; $('doneAuto').hidden = !(auto && !local); show('doneView');
   }
   function resetForAnother() {
-    state.files = []; state.clientId = ''; state.ivaAuto = false; state.clubAuto = false; state.clubPrev = ''; state.eventManual = false; renderThumbs();
+    state.files = []; state.clientId = ''; state.ivaAuto = false; state.clubAuto = false; state.clubPrev = ''; state.eventManual = false; renderThumbs(); aiReset();
     $('ivaSuggest').hidden = true;
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
     ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate', 'irpfOther', 'mb21', 'mb10', 'mb4', 'mb0', 'mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).value = ''; if ($(i).dataset) delete $(i).dataset.manual; });
     $('ivaMulti').hidden = true;
-    $('nif').value = ''; $('concept').value = ''; syncConceptTiles(); $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('irpfWarn').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; applyEvent(); show('formView');
+    $('nif').value = ''; $('concept').value = ''; syncConceptTiles(); $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('irpfWarn').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; $('more').open = false; applyEvent(); updateStep2(); show('formView');
   }
 
   /* ---------- envío de la cola ---------- */
@@ -516,16 +659,36 @@
     { id: 'D2', clientId: 'b', reimb: true, date: '2026-11-11', event: 'Leyenda de Tartessos · 21–24 ene', concept: 'Hotel/Apartamentos', supplier: 'Hotel Sol', amount: 186.16, person: 'Persona A', status: 'Pendiente' },
     { id: 'D3', clientId: 'c', reimb: true, date: '2026-11-18', event: 'Mediterranean Epic · 4 feb', concept: 'Comida', supplier: 'Bar Pepe', amount: 42.5, person: 'Persona A', status: 'Pendiente' },
     { id: 'D4', clientId: 'd', reimb: true, date: '2026-11-20', event: 'Mediterranean Epic · 4 feb', concept: 'Peajes/Parking', supplier: '', amount: 9.8, person: 'Persona A', status: 'Liquidado' }] : [];
+  function mockAiPresets() { // respuestas de ejemplo de la lectura (también en window.__mockAiPresets para pruebas)
+    var f = todayISO(); if (f > '2026-11-14') f = '2026-11-14';
+    var base = function (o) { return { ok: true, remaining: 18, data: Object.assign({ legible: true, tipoDocumento: null, proveedor: null, nifEmisor: null, nifValido: null, numeroDocumento: null, fecha: null, total: null, moneda: 'EUR', iva: [], aNombreDelClub: null, concepto: null, notas: '', dudas: [] }, o) }; };
+    var P = {
+      factura1: base({ tipoDocumento: 'Factura completa', proveedor: 'Estación de Servicio El Pino S.L.', nifEmisor: 'B12345674', nifValido: true, numeroDocumento: 'F-2026-0412', fecha: f, total: 60.5, iva: [{ tipo: 21, base: 50, cuota: 10.5 }], aNombreDelClub: true, concepto: 'Diésel' }),
+      factura2: base({ tipoDocumento: 'Factura completa', proveedor: 'Supermercados La Vega S.A.', nifEmisor: 'A28000727', nifValido: true, numeroDocumento: 'A-77310', fecha: f, total: 57.2, iva: [{ tipo: 10, base: 30, cuota: 3 }, { tipo: 21, base: 20, cuota: 4.2 }], aNombreDelClub: true, concepto: 'Supermercado' }),
+      ticket: base({ tipoDocumento: 'Ticket / factura simplificada', proveedor: 'Bar Pepe', numeroDocumento: 'T-0087', fecha: f, total: 12.4, iva: [{ tipo: 10, base: 11.27, cuota: 1.13 }], aNombreDelClub: false, concepto: 'Comida' }),
+      ilegible: base({ legible: false }),
+      nodisponible: { ok: false, error: 'La lectura automática no está disponible', unavailable: true },
+      chf: base({ tipoDocumento: 'Ticket / factura simplificada', proveedor: 'Migros Zürich', fecha: f, total: 45.3, moneda: 'CHF', concepto: 'Comida' })
+    };
+    window.__mockAiPresets = window.__mockAiPresets || P; return P;
+  }
   function mockApi(body) {
     return new Promise(function (res, rej) {
-      (window.__mockLog = window.__mockLog || []).push({ action: body.action, env: body.env, pin: body.pin, data: body.data }); // solo demo: permite comprobar qué se envía
+      (window.__mockLog = window.__mockLog || []).push({ action: body.action, env: body.env, pin: body.pin, data: body.data, files: (body.files || []).map(function (f) { return { name: f.name, mime: f.mime, len: String(f.base64 || '').length }; }) }); // solo demo: permite comprobar qué se envía
+      var aiRes = null, delay = 350;
+      if (body.action === 'extract') { // lectura simulada: window.__mockAi (objeto o función(body, n) con la respuesta completa) y window.__mockAiDelay (ms o función(n))
+        var aiN = window.__mockAiCalls = (window.__mockAiCalls || 0) + 1, aiR = window.__mockAi, aiD = window.__mockAiDelay;
+        if (typeof aiR === 'function') aiR = aiR(body, aiN);
+        aiRes = aiR || mockAiPresets().factura1; delay = typeof aiD === 'function' ? aiD(aiN) : (typeof aiD === 'number' ? aiD : 800);
+      }
       setTimeout(function () {
         if (window.__mockOffline) return rej(netError('Sin conexión'));
         if (body.password !== 'demo') return res({ ok: false, error: 'Clave incorrecta (modo demo: usa "demo")' });
+        if (body.action === 'extract') { if (!body.files || !body.files.length) return res({ ok: false, error: 'Faltan archivos', unavailable: false }); return res(JSON.parse(JSON.stringify(aiRes))); }
         if (['pin', 'submit', 'mine'].indexOf(body.action) >= 0 && (body.action === 'submit' ? body.data.person : body.person) !== 'Tarjeta empresa' && body.pin !== '123456') return res({ ok: false, pinError: true, error: 'PIN incorrecto (modo demo: 123456)' });
         if (body.action === 'pin') return res({ ok: true, salary: body.person === 'Persona A' });
         if (body.action === 'submit' && window.__mockDup && !body.force) return res({ ok: false, duplicate: true, message: 'Ya hay un gasto igual (demo).' });
-        if (body.action === 'login') return res({ ok: true, config: {
+        if (body.action === 'login') return res({ ok: true, config: { ai: !window.__mockNoAi,
           persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa', noPin: n === 'Tarjeta empresa' }; }),
           events: [{ id: 'e1', label: 'Evento de ejemplo 1', quarter: 1 }, { id: 'e2', label: 'Evento de ejemplo 2', quarter: 2 }, { id: 'general', label: 'Gastos generales (sin evento)', quarter: 0 }],
           concepts: ['Vuelos/Barco', 'Diésel', 'Peajes/Parking', 'Comida', 'Hotel/Apartamentos', 'Supermercado', 'Otros', 'Honorarios profesionales', 'Media/Filmaker', 'Social media'],
@@ -543,7 +706,7 @@
             items: mine.map(function (x) { return { date: x.date, event: x.event, concept: x.concept, supplier: x.supplier, amount: x.amount, status: x.status, paidOn: '' }; }) });
         }
         res({ ok: false, error: 'Acción desconocida' });
-      }, 350);
+      }, delay);
     });
   }
 
@@ -553,10 +716,14 @@
   $('logout').addEventListener('click', function () { clearSession(); state.password = ''; $('password').value = ''; $('queueBanner').hidden = true; show('loginView'); });
   $('tabUpload').addEventListener('click', function () { show('formView'); });
   $('tabMine').addEventListener('click', function () { show('mineView'); loadMine(); });
-  $('pin').addEventListener('change', verifyPin);
+  $('pin').addEventListener('change', verifyPin); $('pin').addEventListener('input', updateStep2);
   $('person').addEventListener('change', onPersonChange);
+  $('aiCard').addEventListener('click', aiCardClick);
+  ['date', 'amount', 'supplier', 'nif', 'docNumber'].forEach(function (i) { $(i).addEventListener('input', function () { aiTouch(i); }); }); // marcar como «tocado a mano»
+  $('date').addEventListener('change', function () { aiTouch('date'); }); $('docType').addEventListener('change', function () { aiTouch('docType'); }); $('inClub').addEventListener('change', function () { aiTouch('inClub'); }); $('concept').addEventListener('change', function () { aiTouch('concept'); });
+  ['mb21', 'mb10', 'mb4', 'mb0', 'mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).addEventListener('input', function () { aiTouch('iva'); }); });
   ['mb21', 'mb10', 'mb4', 'mb0'].forEach(function (i) { $(i).addEventListener('input', updateMulti); }); ['mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).addEventListener('input', function () { $(i).dataset.manual = $(i).value.trim() ? '1' : ''; updateMulti(); }); });
-  $('docType').addEventListener('change', updateDoc); $('nif').addEventListener('input', updateNif); $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', onIvaChange); $('event').addEventListener('change', function () { state.eventManual = true; updateEventHint(); }); $('irpfRate').addEventListener('change', updateIva); $('irpfOther').addEventListener('input', updateIva); $('concept').addEventListener('change', onConceptChange); $('person').addEventListener('change', updateIva);
+  $('docType').addEventListener('change', updateDoc); $('nif').addEventListener('input', updateNif); $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', onIvaChange); $('event').addEventListener('change', function () { state.eventManual = true; updateEventHint(); updateStep2(); }); $('irpfRate').addEventListener('change', updateIva); $('irpfOther').addEventListener('input', updateIva); $('concept').addEventListener('change', onConceptChange); $('person').addEventListener('change', updateIva);
   $('amount').addEventListener('blur', function () { var a = parseAmount(this.value); if (!isNaN(a) && a > 0) this.value = a.toFixed(2).replace('.', ','); updateIva(); });
   $('btnCamera').addEventListener('click', function () { $('fileCamera').click(); });
   $('btnGallery').addEventListener('click', function () { $('fileGallery').click(); });
@@ -577,6 +744,7 @@
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(function () {});
   var pw = savedPassword();
   show('loginView');
+  if (MOCK) { mockAiPresets(); }
   if (MOCK) { $('loginError').textContent = 'MODO DEMO: clave "demo". No se guarda nada real.'; $('loginError').hidden = false; }
   if (pw) {
     var cfg = null; try { cfg = JSON.parse(lsGet('gx.cfg') || 'null'); } catch (e) {}
