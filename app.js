@@ -23,7 +23,11 @@
   function parseAmount(v) {
     v = String(v || '').trim().replace(/[\s€]/g, '');
     if (!v) return NaN;
-    if (v.indexOf(',') > -1 && v.indexOf('.') > -1) v = v.replace(/\./g, '').replace(',', '.'); else v = v.replace(',', '.');
+    var c = v.lastIndexOf(','), d = v.lastIndexOf('.');
+    if (c > -1 && d > -1) v = c > d ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, ''); // el último separador es el decimal
+    else if (d > -1 && (v.match(/\./g) || []).length > 1) v = v.replace(/\./g, ''); // 1.234.567 -> miles
+    else if (d > -1 && /^\d{1,3}\.\d{3}$/.test(v)) v = v.replace('.', ''); // 1.234 -> mil doscientos treinta y cuatro
+    else v = v.replace(',', '.');
     return Number(v);
   }
   function uuid() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }); }
@@ -112,6 +116,7 @@
     $('date').value = ''; $('date').max = todayISO(); $('date').min = '2026-11-01';
     onPersonChange();
   }
+  function personNeedsPin(name) { var os = $('person') ? $('person').options : []; for (var i = 0; i < os.length; i++) if (os[i].value === name) return os[i].dataset.nopin !== '1'; return true; }
   function needsPin() { var o = $('person').options[$('person').selectedIndex]; return !!($('person').value && o && o.dataset.nopin !== '1'); }
   function onPersonChange() {
     var sel = $('person'), o = sel.options[sel.selectedIndex], n = $('personNote');
@@ -146,6 +151,7 @@
   }
   function updateIva() {
     updateWhom();
+    $('amountLabel').textContent = isHon() ? 'Total de la factura ANTES de la retención (base + IVA)' : 'Importe IVA incluido';
     var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = irpfValue(), ic = $('irpfCalc'); $('irpfOther').hidden = $('irpfRate').value !== 'other';
     $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && state.salary);
     if (isHon() && !$('docType').value) { $('docType').value = 'Factura completa'; updateDoc(); }
@@ -335,7 +341,7 @@
     });
   }
   function saveLocal(payload, info) {
-    var item = Object.assign({ savedAt: Date.now(), info: info }, payload);
+    var item = Object.assign({ savedAt: Date.now(), info: info, pin: needsPin() ? $('pin').value.trim() : '' }, payload); // el PIN escrito sin cobertura viaja con el gasto
     return qPut(item).then(function () { state.clientId = ''; done(info, info.reimb, true); renderQueue(); });
   }
   function done(info, reimb, local) {
@@ -365,7 +371,9 @@
       return items.filter(function (i) { return !i.failedMsg; }).reduce(function (p, it) {
         return p.then(function (stop) {
           if (stop) return true;
-          var body = Object.assign({}, it, { password: state.password, pin: state.pins[it.data.person] || '', force: !!it.forceSend }); delete body.info; delete body.savedAt; delete body.dupe; delete body.forceSend;
+          var pinV = it.pin || state.pins[it.data.person] || '';
+          if (!pinV && personNeedsPin(it.data.person)) { toast('Falta el PIN de ' + it.data.person + ': ábrelo en «Subir gasto» y escríbelo para enviar los pendientes.'); return true; } // sin PIN no se envía: cada intento vacío cuenta como fallo y bloquea
+          var body = Object.assign({}, it, { password: state.password, pin: pinV, force: !!it.forceSend }); delete body.info; delete body.savedAt; delete body.dupe; delete body.forceSend;
           return api(body).then(function (res) {
             if (res && res.ok) { sent++; return qDel(it.clientId).then(function () { return false; }); }
             if (res && res.duplicate) { it.failedMsg = 'Posible duplicado (' + (res.message || 'ya hay un gasto igual') + ')'; it.dupe = true; return qPut(it).then(function () { return false; }); }
