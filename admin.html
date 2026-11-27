@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2F5258">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Administración · Gastos SCOTT-ISB</title>
+  <link rel="icon" href="assets/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    main{max-width:760px}
+    .acard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+    .acard .top1{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .acard .ttl{font-weight:700}.acard .amt{font-weight:800;white-space:nowrap}
+    .acard .sub2{color:var(--muted);font-size:13px;margin-top:2px}
+    .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+    .top-title{font-size:17px;gap:8px}
+    #logout{font-size:13px;font-style:normal;padding:6px 10px;border:1px solid var(--line);border-radius:999px;cursor:pointer;color:var(--muted)}
+    .tab{white-space:nowrap;font-size:14px}
+    .sec .abtn{white-space:nowrap}
+    .abtn{justify-content:center;white-space:nowrap;min-height:40px;padding:0 14px;border-radius:10px;border:1.5px solid var(--brand);background:transparent;color:var(--text);font:inherit;font-weight:700;font-size:14px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
+    .abtn.go{background:var(--brand);border-color:var(--brand);color:#fff}
+    .abtn.wr{border-color:var(--warn);color:var(--warn)}
+    .abtn.link{border-color:var(--line);color:var(--brand-light)}
+    .abtn[disabled]{opacity:.45}
+    .inl{display:flex;gap:8px;margin-top:10px}.inl input{min-height:42px}
+    .sec{margin:18px 4px 8px;font-weight:800;font-size:16px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .qrow{display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;font-size:14px;padding:6px 0;border-top:1px solid var(--line)}
+    .qrow:first-child{border-top:0}.qrow .n{text-align:right;font-variant-numeric:tabular-nums}
+    .hd{color:var(--muted);font-size:12px}
+    details.more2{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 14px;margin-bottom:10px}
+    details.more2 summary{cursor:pointer;font-weight:700;color:var(--brand-light)}
+    .frm{display:grid;gap:8px;margin-top:10px}.frm .row{display:flex;gap:8px}
+    .msg{margin-top:8px;font-size:14px}.msg.bad{color:var(--danger)}.msg.good{color:var(--ok)}
+    .pill.rev{color:var(--ok);border-color:var(--ok)}.pill.inc{color:var(--danger);border-color:var(--danger)}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <img class="logo" src="assets/logo-blanco.png" alt="SCOTT ISB Off Road">
+    <div class="top-title">Administración<span id="logout" hidden>Salir</span></div>
+  </header>
+  <nav id="tabs" class="tabs" hidden>
+    <button class="tab active" data-tab="rev" type="button">Revisar <span id="nRev"></span></button>
+    <button class="tab" data-tab="liq" type="button">Liquidar</button>
+    <button class="tab" data-tab="imp" type="button">Impuestos</button>
+    <button class="tab" data-tab="mas" type="button">Más</button>
+  </nav>
+  <main>
+    <section id="loginView">
+      <div class="card">
+        <h1>Acceso de administración</h1>
+        <p class="muted">Solo para la persona que revisa y liquida los gastos.</p>
+        <label for="key">Clave de administración</label>
+        <input id="key" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX">
+        <label class="check"><input id="remember" type="checkbox"> Recordar en este dispositivo (no en móviles compartidos)</label>
+        <p id="loginError" class="error" hidden></p>
+        <button id="loginBtn" class="btn primary" type="button">Entrar</button>
+      </div>
+    </section>
+    <section id="appView" hidden>
+      <div id="tab-rev"></div>
+      <div id="tab-liq" hidden></div>
+      <div id="tab-imp" hidden></div>
+      <div id="tab-mas" hidden></div>
+    </section>
+  </main>
+  <div id="busy" class="busy" hidden><div class="spin"></div><p id="busyText">Un momento…</p></div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="config.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
