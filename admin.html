@@ -38,6 +38,13 @@
     .rf select,.rf input{min-height:46px;padding:9px 12px}
     .rf .row{display:flex;gap:8px}.rf label{flex:1;min-width:0;display:grid;gap:3px;font-size:12px;color:var(--muted)}
     .rfsum{margin:0 4px 8px}
+    .tabs{overflow-x:auto}.tab{padding:0 6px;font-size:13px}
+    .fixwrap{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:15;overflow:auto;padding:16px 12px}
+    .fixbox{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;max-width:520px;margin:0 auto}
+    .fixbox .frm label{display:grid;gap:3px;font-size:12px;color:var(--muted);flex:1;min-width:0}
+    .fixbox .frm .row{display:flex;gap:8px}.fixbox input,.fixbox select{min-height:46px;padding:9px 12px}
+    body.modal{overflow:hidden}
+    label.tm{display:grid;gap:3px;font-size:12px;color:var(--muted)}
     .msg{margin-top:8px;font-size:14px}.msg.bad{color:var(--danger)}.msg.good{color:var(--ok)}
     .pill.rev{color:var(--ok);border-color:var(--ok)}.pill.inc{color:var(--danger);border-color:var(--danger)}
   </style>
@@ -50,6 +57,7 @@
   <nav id="tabs" class="tabs" hidden>
     <button class="tab active" data-tab="rev" type="button">Revisar <span id="nRev"></span></button>
     <button class="tab" data-tab="liq" type="button">Liquidar</button>
+    <button class="tab" data-tab="his" type="button">Histórico</button>
     <button class="tab" data-tab="imp" type="button">Impuestos</button>
     <button class="tab" data-tab="mas" type="button">Más</button>
   </nav>
@@ -68,10 +76,12 @@
     <section id="appView" hidden>
       <div id="tab-rev"></div>
       <div id="tab-liq" hidden></div>
+      <div id="tab-his" hidden></div>
       <div id="tab-imp" hidden></div>
       <div id="tab-mas" hidden></div>
     </section>
   </main>
+  <div id="fix" class="fixwrap" hidden><div class="fixbox" role="dialog" aria-modal="true" aria-label="Corregir gasto"><h2 style="margin:0 0 6px">Corregir gasto</h2><div id="fixBody"></div></div></div>
   <div id="busy" class="busy" hidden><div class="spin"></div><p id="busyText">Un momento…</p></div>
   <div id="toast" class="toast" hidden></div>
   <script src="config.js"></script>
