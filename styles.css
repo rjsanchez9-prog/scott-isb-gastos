@@ -98,3 +98,5 @@ label.first{margin-top:0}
 .chip.on{border-color:var(--brand-light);background:rgba(79,134,142,.28);color:#fff}
 .mine-ev{margin-bottom:10px}
 .mine-sum{margin:2px 4px 10px;font-size:15px}
+
+.pill.warnx{color:var(--danger);border-color:var(--danger);white-space:normal}
