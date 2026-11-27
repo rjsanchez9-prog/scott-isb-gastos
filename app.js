@@ -7,7 +7,7 @@
   var MOCK = /[?&]mock=1/.test(location.search) || CFG.backendUrl === 'MOCK';
   var MAX_FILES = 4, MAX_PDF_MB = 7, BLUR_THRESHOLD = 200, TIMEOUT_MS = 60000;
   var $ = function (id) { return document.getElementById(id); };
-  var state = { password: '', pins: {}, salary: false, config: null, files: [], force: false, clientId: '', offline: false, flushing: false };
+  var state = { password: '', pins: {}, salary: false, config: null, files: [], force: false, clientId: '', offline: false, flushing: false, again: false, eventManual: false, ivaAuto: false, clubAuto: false, clubPrev: '' };
 
   /* ---------- utilidades ---------- */
   function toast(msg) { var t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(function () { t.hidden = true; }, 4000); }
@@ -21,14 +21,14 @@
   function todayISO() { return new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
   function fmt(n) { return Number(n).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
   function parseAmount(v) {
-    v = String(v || '').trim().replace(/[\s€]/g, '');
+    v = String(v == null ? '' : v).trim().replace(/[\s€]/g, '');
     if (!v) return NaN;
-    var c = v.lastIndexOf(','), d = v.lastIndexOf('.');
+    var c = v.lastIndexOf(','), d = v.lastIndexOf('.'), dots = (v.match(/\./g) || []).length;
     if (c > -1 && d > -1) v = c > d ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, ''); // el último separador es el decimal
-    else if (d > -1 && (v.match(/\./g) || []).length > 1) v = v.replace(/\./g, ''); // 1.234.567 -> miles
-    else if (d > -1 && /^\d{1,3}\.\d{3}$/.test(v)) v = v.replace('.', ''); // 1.234 -> mil doscientos treinta y cuatro
-    else v = v.replace(',', '.');
-    return Number(v);
+    else if (dots > 1) v = /^[1-9]\d{0,2}(\.\d{3})+$/.test(v) ? v.replace(/\./g, '') : 'x'; // 1.234.567 -> miles
+    else if (d > -1 && /^[1-9]\d{0,2}\.\d{3}$/.test(v)) v = v.replace('.', ''); // 1.500 -> mil quinientos (punto + 3 cifras, sin coma = miles)
+    else v = v.replace(',', '.'); // 12,5 -> 12.5 · 12.5 se queda igual · 0.500 -> 0,5
+    return /^(\d+\.?\d*|\.\d+)$/.test(v) ? Number(v) : NaN;
   }
   function uuid() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -37,7 +37,7 @@
   function clearSession() { state.mpin = ''; try { localStorage.removeItem('gx.mpin'); localStorage.removeItem('gx.pw'); sessionStorage.removeItem('gx.pw'); localStorage.removeItem('gx.cfg'); localStorage.removeItem('gx.pins'); } catch (e) {} state.pins = {}; }
   function loadPins() { state.mpin = lsGet('gx.mpin') || ''; try { state.pins = JSON.parse(lsGet('gx.pins') || '{}') || {}; } catch (e) { state.pins = {}; } }
   function savePins() { lsSet('gx.pins', JSON.stringify(state.pins)); }
-  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); } // también comillas: sirve para texto y para atributos
 
   /* ---------- cola local (IndexedDB, con respaldo en memoria) ---------- */
   var memQ = [];
@@ -62,6 +62,7 @@
 
   /* ---------- API (real o simulada) ---------- */
   function api(body) {
+    if (CFG.env) body = Object.assign({}, body, { env: CFG.env }); // entorno de pruebas: solo existe si config.js lo define
     if (MOCK) return mockApi(body);
     if (!CFG.backendUrl || /PEGAR/.test(CFG.backendUrl)) return Promise.reject(netError('La plataforma aún no está conectada al servidor.'));
     var ctl = ('AbortController' in window) ? new AbortController() : null, timer = ctl ? setTimeout(function () { ctl.abort(); }, TIMEOUT_MS) : null;
@@ -99,7 +100,7 @@
   function opt(v, t, extra) { var o = document.createElement('option'); o.value = v; o.textContent = t; if (extra) Object.keys(extra).forEach(function (k) { o.dataset[k] = extra[k]; }); return o; }
   function initForm() {
     var c = state.config, p = $('person'), e = $('event'), k = $('concept'), mp = $('minePerson');
-    p.innerHTML = ''; e.innerHTML = ''; k.innerHTML = ''; mp.innerHTML = '';
+    p.innerHTML = ''; e.innerHTML = ''; k.innerHTML = ''; mp.innerHTML = ''; state.eventManual = false;
     p.appendChild(opt('', 'Selecciona tu nombre…'));
     var fw = $('forWhom'); fw.innerHTML = ''; fw.appendChild(opt('', 'Nadie en concreto'));
     c.persons.forEach(function (x) { p.appendChild(opt(x.name, x.name, { reimb: x.reimbursable ? '1' : '0', sup: x.supplier ? '1' : '0', nopin: x.noPin ? '1' : '0' })); mp.appendChild(opt(x.name, x.name)); if (x.reimbursable && !x.supplier) fw.appendChild(opt(x.name, x.name)); });
@@ -150,16 +151,22 @@
     if (o && o.dataset.sup === '1') { n.textContent = 'Factura de un proveedor (agencia de viajes, etc.) que pagará el club por transferencia: queda pendiente de pago hasta que se abone. Indica en "Más datos" para quién es.'; n.hidden = false; }
     else if (o && o.dataset.reimb === '0') { n.textContent = 'Pago con la tarjeta del club: se guarda para el IVA, pero NO entra en ninguna liquidación de gastos.'; n.hidden = false; } else n.hidden = true;
     if (sel.value) { lsSet('gx.person', sel.value); $('minePerson').value = sel.value; }
+    applyEvent();
     $('pinBox').hidden = !needsPin(); $('pin').value = needsPin() ? (state.pins[sel.value] || (sel.value !== 'José María Sánchez' && state.mpin) || '') : ''; state.salary = false; $('pinStatus').textContent = '';
     if (needsPin() && $('pin').value) verifyPin();
   }
   var HON = 'Honorarios profesionales';
   function irpfValue() {
     var v = $('irpfRate').value; if (v !== 'other') return v;
-    var t = $('irpfOther').value.trim().replace(',', '.'), n = Number(t);
-    return (t !== '' && !isNaN(n) && n >= 0 && n <= 47) ? String(Math.round(n * 100) / 100) : '';
+    var t = $('irpfOther').value.trim().replace(',', '.'), n = /^\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+    return (!isNaN(n) && n >= 0 && n <= 47) ? String(Math.round(n * 100) / 100) : '';
   }
-  function isHon() { return $('concept').value === HON; }
+  function isHon() { return $('concept').value === HON; } // reglas exclusivas de honorarios (factura completa, un solo IVA, partida anual)
+  function irpfList() { var l = state.config && state.config.irpfConcepts; return Array.isArray(l) ? l : [HON]; } // conceptos que piden retención (respaldo: solo honorarios)
+  function needsIrpf() { return irpfList().indexOf($('concept').value) >= 0; }
+  function irpfPositive() { var v = irpfValue(); return v !== '' && Number(v) > 0; }
+  function isTicket() { return $('docType').value === 'Ticket / factura simplificada'; }
+  function updateIrpfWarn() { $('irpfWarn').hidden = !(needsIrpf() && irpfPositive() && isTicket()); }
   var TRAVEL = ['Vuelos/Barco', 'Hotel/Apartamentos', 'Coche de alquiler', 'Inscripciones'];
   function updateWhom() {
     var po = $('person').options[$('person').selectedIndex], c = $('concept').value;
@@ -172,22 +179,45 @@
     if (state.offline || !navigator.onLine) { st.textContent = 'Sin cobertura: el PIN se comprobará al enviar.'; return Promise.resolve(false); }
     return api({ action: 'pin', password: state.password, person: person, pin: pin }).then(function (res) {
       if (res && res.ok && res.master) { state.mpin = pin; lsSet('gx.mpin', pin); state.salary = false; st.textContent = '✔ PIN maestro: solo sirve para consultar «Mis gastos» de esta persona'; updateIva(); return true; }
-      if (res && res.ok) { state.pins[person] = pin; savePins(); state.salary = !!res.salary; st.textContent = '✔ PIN correcto'; updateIva(); return true; }
+      if (res && res.ok) { state.pins[person] = pin; savePins(); state.salary = !!res.salary; st.textContent = '✔ PIN correcto'; updateIva(); retryFailed(person, true); return true; }
       state.salary = false; st.textContent = (res && res.error) || 'PIN incorrecto'; updateIva(); return false;
     }).catch(function () { st.textContent = 'No se pudo comprobar (sin conexión).'; return false; });
   }
   function updateIva() {
     updateWhom();
-    $('amountLabel').textContent = isHon() ? 'Total de la factura ANTES de la retención (base + IVA)' : 'Importe IVA incluido';
+    var hon = isHon(), irp = needsIrpf();
+    $('amountLabel').textContent = irp ? 'Total de la factura ANTES de la retención (base + IVA)' : 'Importe IVA incluido';
     var a = parseAmount($('amount').value), r = $('ivaRate').value, el = $('ivaCalc'), ir = irpfValue(), ic = $('irpfCalc'); $('irpfOther').hidden = $('irpfRate').value !== 'other';
-    $('irpfBox').hidden = !isHon(); $('irpfNote').hidden = !(isHon() && state.salary);
-    if (isHon() && !$('docType').value) { $('docType').value = 'Factura completa'; updateDoc(); }
+    $('irpfBox').hidden = !irp; $('irpfNote').hidden = !(hon && state.salary);
+    $('irpfHelp').textContent = hon ? 'Pon el porcentaje que indique la factura del profesional.' : 'Si quien te factura es un autónomo, su factura suele llevar retención de IRPF (15 % o 7 %). Elige 0 % si no lleva.';
+    if (hon && !$('docType').value) { $('docType').value = 'Factura completa'; updateDoc(); }
+    updateIrpfWarn();
     ic.hidden = true; $('ivaMulti').hidden = r !== 'multi'; if (r === 'multi') updateMulti();
     if (!isNaN(a) && a > 0 && r !== '' && r !== 'multi') {
       var base = a / (1 + Number(r) / 100); el.textContent = 'Base imponible ' + fmt(base) + ' € · IVA ' + fmt(a - base) + ' €'; el.hidden = false;
-      if (isHon() && ir !== '') { var ret = Math.round(base * Number(ir)) / 100; ic.textContent = 'Retención ' + fmt(ret) + ' € · A transferir ' + fmt(a - ret) + ' €'; ic.hidden = false; }
+      if (irp && ir !== '') { var ret = Math.round(base * Number(ir)) / 100; ic.textContent = 'Retención ' + fmt(ret) + ' € · A transferir ' + fmt(a - ret) + ' €'; ic.hidden = false; }
     } else el.hidden = true;
   }
+
+  /* ---------- atajos: último evento e IVA sugerido ---------- */
+  function evMap() { var m = null; try { m = JSON.parse(lsGet('gx.events') || '{}'); } catch (e) {} return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {}; }
+  function rememberEvent(person, id) { if (!person || !id) return; var m = evMap(); m[person] = id; lsSet('gx.events', JSON.stringify(m)); }
+  function updateEventHint() { var p = $('person').value, id = p ? evMap()[p] : ''; $('eventHint').hidden = !(id && $('event').value === id); }
+  function applyEvent() { // deja puesto el último evento de esta persona, salvo que ya haya elegido uno a mano; la primera vez no hay nada
+    var e = $('event'), p = $('person').value, id = p ? evMap()[p] : '', ok = false;
+    Array.prototype.forEach.call(e.options, function (o) { if (id && o.value === id) ok = true; });
+    if (!state.eventManual) e.value = ok ? id : '';
+    updateEventHint();
+  }
+  function suggestIva() {
+    var c = $('concept').value, d = state.config && state.config.ivaDefaults, sel = $('ivaRate'), n = $('ivaSuggest'), v = (c && d && Object.prototype.hasOwnProperty.call(d, c)) ? String(d[c]).trim() : '';
+    if (['21', '10', '4', '0'].indexOf(v) < 0) v = '';
+    if (sel.value !== '' && !state.ivaAuto) return; // la persona ya eligió el IVA: no se pisa
+    if (v) { sel.value = v; state.ivaAuto = true; n.textContent = 'Sugerido para ' + c + ': ' + v + ' %. Cámbialo si tu ticket dice otro.'; n.hidden = false; }
+    else if (state.ivaAuto) { sel.value = ''; state.ivaAuto = false; n.hidden = true; n.textContent = ''; }
+  }
+  function onConceptChange() { suggestIva(); updateIva(); }
+  function onIvaChange() { state.ivaAuto = false; $('ivaSuggest').hidden = true; updateIva(); } // cambio hecho por la persona
 
   /* ---------- varios tipos de IVA (supermercado…) ---------- */
   var RATES = [21, 10, 4, 0];
@@ -306,7 +336,14 @@
     $('moreSum').textContent = fact ? 'Datos de la factura (obligatorios)' : 'Más datos (opcional)';
     $('supplier').placeholder = fact ? 'Nombre de la empresa o autónomo que emite la factura' : 'Ej. Repsol, Hotel Girona…';
     if (fact) d.open = true;
+    syncClub(); updateIrpfWarn();
     updateNif();
+  }
+  function syncClub() { // un ticket nunca va a nombre del club: se oculta la pregunta y se envía «No»
+    var tk = isTicket(), sel = $('inClub');
+    $('inClubBox').hidden = tk; $('inClubTicket').hidden = !tk; $('inClubHelp').hidden = tk;
+    if (tk) { if (!state.clubAuto) { state.clubPrev = sel.value; state.clubAuto = true; } sel.value = 'No'; }
+    else if (state.clubAuto) { sel.value = state.clubPrev || ''; state.clubAuto = false; state.clubPrev = ''; }
   }
   function updateNif() {
     var el = $('nifStatus'), v = $('nif').value.trim();
@@ -327,10 +364,11 @@
     if (!$('concept').value) err.push(['concept', 'Elige el tipo de gasto']);
     if (!$('ivaRate').value) err.push(['ivaRate', 'Indica el tipo de IVA (mira la factura)']);
     else if ($('ivaRate').value === 'multi') multiErrors(a).forEach(function (m) { err.push(['mb21', m]); });
-    if (!$('inClub').value) err.push(['inClub', 'Indica si la factura está a nombre del club']);
-    if (isHon() && irpfValue() === '') err.push([$('irpfRate').value === 'other' ? 'irpfOther' : 'irpfRate', 'Indica la retención de IRPF de la factura (0 si no lleva; entre 0 y 47 %)']);
+    if (!isTicket() && !$('inClub').value) err.push(['inClub', 'Indica si la factura está a nombre del club']);
+    if (needsIrpf() && irpfValue() === '') err.push([$('irpfRate').value === 'other' ? 'irpfOther' : 'irpfRate', 'Indica la retención de IRPF de la factura (0 si no lleva; entre 0 y 47 %)']);
     if (!$('docType').value) err.push(['docType', 'Indica si es factura completa o ticket']);
     else if ($('docType').value !== 'Factura completa' && isHon()) err.push(['docType', 'Los honorarios profesionales requieren factura completa']);
+    else if ($('docType').value !== 'Factura completa' && needsIrpf() && irpfPositive()) err.push(['docType', 'Si la factura lleva retención de IRPF hace falta una factura completa (un ticket no sirve). Elige «Factura completa» o pon la retención a 0 % si no la lleva']);
     else if ($('docType').value === 'Factura completa') {
       if ($('supplier').value.trim().length < 2) err.push(['supplier', 'Indica la razón social del emisor de la factura']);
       if (!$('docNumber').value.trim()) err.push(['docNumber', 'Indica el nº de factura']);
@@ -350,10 +388,10 @@
     var payload = {
       action: 'submit', clientId: state.clientId,
       data: { person: $('person').value, eventId: $('event').value, date: $('date').value, amount: Math.round(a * 100) / 100, concept: $('concept').value,
-        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), nif: $('docType').value === 'Factura completa' ? nifCheck($('nif').value).nif || '' : '', docType: $('docType').value, ivaRate: $('ivaRate').value, ivaBreakdown: $('ivaRate').value === 'multi' ? breakdown() : undefined, irpfRate: isHon() ? irpfValue() : '', inClub: $('inClub').value, notes: $('notes').value.trim() },
+        forWhom: $('forWhomBox').hidden ? '' : $('forWhom').value, supplier: $('supplier').value.trim(), docNumber: $('docNumber').value.trim(), nif: $('docType').value === 'Factura completa' ? nifCheck($('nif').value).nif || '' : '', docType: $('docType').value, ivaRate: $('ivaRate').value, ivaBreakdown: $('ivaRate').value === 'multi' ? breakdown() : undefined, irpfRate: needsIrpf() ? irpfValue() : '', inClub: isTicket() ? 'No' : $('inClub').value, notes: $('notes').value.trim() },
       files: state.files.map(function (f) { return { name: f.name, mime: f.mime, base64: f.base64 }; })
     };
-    var info = { who: payload.data.person, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
+    var info = { who: payload.data.person, eventId: payload.data.eventId, label: eventLabel(), amount: fmt(a), reimb: $('person').options[$('person').selectedIndex].dataset.reimb !== '0', sup: $('person').options[$('person').selectedIndex].dataset.sup === '1' };
     if (state.offline || !navigator.onLine) return saveLocal(payload, info);
     busy(true, 'Subiendo gasto… no cierres la página');
     api(Object.assign({ password: state.password, pin: needsPin() ? $('pin').value.trim() : '', force: state.force }, payload)).then(function (res) {
@@ -361,7 +399,7 @@
       if (res && res.pinError) { box.textContent = res.error; box.hidden = false; $('pinStatus').textContent = res.error; $('pin').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
       if (res && res.duplicate) { if (window.confirm(res.message + '\n\n¿Subirlo de todas formas?')) { state.force = true; submit(ev); } return; }
       if (!res || !res.ok) { box.textContent = (res && res.error) || 'No se pudo guardar. Inténtalo de nuevo.'; box.hidden = false; return; }
-      if (needsPin()) { state.pins[payload.data.person] = $('pin').value.trim(); savePins(); } state.clientId = ''; done(info, res.reimbursable !== false, false);
+      if (needsPin()) { state.pins[payload.data.person] = $('pin').value.trim(); savePins(); } state.clientId = ''; done(info, res.reimbursable !== false, false, !!res.auto);
     }).catch(function (e) {
       busy(false);
       if (e && e.network) saveLocal(payload, info); else { box.textContent = 'Error: ' + (e && e.message); box.hidden = false; }
@@ -371,7 +409,8 @@
     var item = Object.assign({ savedAt: Date.now(), info: info, pin: needsPin() ? $('pin').value.trim() : '' }, payload); // el PIN escrito sin cobertura viaja con el gasto
     return qPut(item).then(function () { state.clientId = ''; done(info, info.reimb, true); renderQueue(); });
   }
-  function done(info, reimb, local) {
+  function done(info, reimb, local, auto) {
+    rememberEvent(info.who, info.eventId);
     $('doneIcon').textContent = local ? '⏳' : '✔';
     $('doneTitle').textContent = local ? 'Guardado en el móvil' : 'Gasto guardado';
     $('doneSummary').textContent = info.who + ' · ' + info.label + ' · ' + info.amount + ' €';
@@ -379,38 +418,55 @@
     var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) && !(window.navigator.standalone);
     n.textContent = local ? 'No hay cobertura: se enviará automáticamente en cuanto la recuperes (mantén la app instalada o abierta una vez con señal).' + (ios ? ' En iPhone, añade esta web a la pantalla de inicio (Compartir → Añadir a pantalla de inicio): si no, el móvil puede borrar los pendientes pasados unos días.' : '')
       : (info.sup ? 'Factura de proveedor registrada: queda pendiente de pago por el club.' : (reimb ? 'Queda pendiente de liquidar a ' + info.who + '.' : 'Gasto de tarjeta del club: registrado para el IVA, sin liquidación.'));
-    n.hidden = false; show('doneView');
+    n.hidden = false; $('doneAuto').hidden = !(auto && !local); show('doneView');
   }
   function resetForAnother() {
-    state.files = []; state.clientId = ''; renderThumbs();
+    state.files = []; state.clientId = ''; state.ivaAuto = false; state.clubAuto = false; state.clubPrev = ''; state.eventManual = false; renderThumbs();
+    $('ivaSuggest').hidden = true;
     ['amount', 'supplier', 'docNumber', 'notes'].forEach(function (i) { $(i).value = ''; });
     ['docType', 'ivaRate', 'inClub', 'forWhom', 'irpfRate', 'irpfOther', 'mb21', 'mb10', 'mb4', 'mb0', 'mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).value = ''; if ($(i).dataset) delete $(i).dataset.manual; });
     $('ivaMulti').hidden = true;
-    $('nif').value = ''; $('concept').value = ''; syncConceptTiles(); $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; show('formView');
+    $('nif').value = ''; $('concept').value = ''; syncConceptTiles(); $('date').value = ''; updateDoc(); $('ivaCalc').hidden = true; $('irpfBox').hidden = true; $('irpfWarn').hidden = true; $('forWhomBox').hidden = true; $('formError').hidden = true; applyEvent(); show('formView');
   }
 
   /* ---------- envío de la cola ---------- */
   function flushQueue() {
-    if (state.flushing || !state.password || !navigator.onLine) return Promise.resolve();
+    if (state.flushing) { state.again = true; return Promise.resolve(); } // si llega otra orden mientras envía, se repasa al terminar
+    if (!state.password || !navigator.onLine) return Promise.resolve();
     state.flushing = true;
     return qAll().then(function (items) {
-      var sent = 0;
+      var sent = 0, badPins = {};
       return items.filter(function (i) { return !i.failedMsg; }).reduce(function (p, it) {
         return p.then(function (stop) {
           if (stop) return true;
           var pinV = it.pin || state.pins[it.data.person] || '';
           if (!pinV && personNeedsPin(it.data.person)) { toast('Falta el PIN de ' + it.data.person + ': ábrelo en «Subir gasto» y escríbelo para enviar los pendientes.'); return true; } // sin PIN no se envía: cada intento vacío cuenta como fallo y bloquea
-          var body = Object.assign({}, it, { password: state.password, pin: pinV, force: !!it.forceSend }); delete body.info; delete body.savedAt; delete body.dupe; delete body.forceSend;
+          var bad = it.data.person + '|' + pinV;
+          if (badPins[bad]) return failPin(it).then(function () { return false; }); // mismo PIN que ya falló: no se vuelve a probar (evita bloquear el PIN)
+          var body = Object.assign({}, it, { password: state.password, pin: pinV, force: !!it.forceSend }); delete body.info; delete body.savedAt; delete body.dupe; delete body.forceSend; delete body.failedMsg; delete body.pinFail;
           return api(body).then(function (res) {
             if (res && res.ok) { sent++; return qDel(it.clientId).then(function () { return false; }); }
             if (res && res.duplicate) { it.failedMsg = 'Posible duplicado (' + (res.message || 'ya hay un gasto igual') + ')'; it.dupe = true; return qPut(it).then(function () { return false; }); }
-            if (res && res.pinError) { toast('PIN incorrecto o bloqueado: ábrelo en «Subir gasto» y vuelve a escribirlo para enviar los pendientes.'); return true; }
+            if (res && res.pinError) { badPins[bad] = 1; return failPin(it).then(function () { return false; }); }
             if (res && /Clave incorrecta/.test(res.error || '')) { toast('La clave ha cambiado: vuelve a entrar para enviar los pendientes.'); return true; }
             it.failedMsg = (res && res.error) || 'Error'; return qPut(it).then(function () { return false; });
           }).catch(function () { state.offline = false; return true; }); // sin cobertura: se reintenta luego
         });
       }, Promise.resolve(false)).then(function () { if (sent) toast('✔ ' + sent + ' gasto' + (sent > 1 ? 's' : '') + ' enviado' + (sent > 1 ? 's' : '') + ' desde el móvil'); });
-    }).catch(function () {}).then(function () { state.flushing = false; renderQueue(); });
+    }).catch(function () {}).then(function () { state.flushing = false; renderQueue(); if (state.again) { state.again = false; return flushQueue(); } });
+  }
+  var PIN_FAIL = 'El PIN no es correcto. Abre el gasto, escribe tu PIN y reenvíalo';
+  function failPin(it) { // queda como fallido y NO se reintenta solo hasta que la persona lo corrija o lo reenvíe
+    it.failedMsg = PIN_FAIL; it.pinFail = true; return qPut(it);
+  }
+  function retryFailed(person, onlyPin) { // person vacío = todos los fallidos; los de PIN solo se reenvían si ya hay un PIN comprobado
+    return qAll().then(function (items) {
+      var missing = false;
+      return Promise.all(items.filter(function (i) { return i.failedMsg && (!person || i.data.person === person) && (!onlyPin || i.pinFail); }).map(function (i) {
+        if (i.pinFail) { if (!state.pins[i.data.person] && personNeedsPin(i.data.person)) { missing = true; return null; } delete i.pin; delete i.pinFail; }
+        delete i.failedMsg; return qPut(i);
+      })).then(function () { if (missing) toast('Para reenviar el gasto con el PIN mal: elige tu nombre en «Subir gasto», escribe tu PIN y vuelve a pulsar Reintentar.'); });
+    }).then(function () { renderQueue(); return flushQueue(); });
   }
 
   /* ---------- Mis gastos ---------- */
@@ -462,6 +518,7 @@
     { id: 'D4', clientId: 'd', reimb: true, date: '2026-11-20', event: 'Mediterranean Epic · 4 feb', concept: 'Peajes/Parking', supplier: '', amount: 9.8, person: 'Persona A', status: 'Liquidado' }] : [];
   function mockApi(body) {
     return new Promise(function (res, rej) {
+      (window.__mockLog = window.__mockLog || []).push({ action: body.action, env: body.env, pin: body.pin, data: body.data }); // solo demo: permite comprobar qué se envía
       setTimeout(function () {
         if (window.__mockOffline) return rej(netError('Sin conexión'));
         if (body.password !== 'demo') return res({ ok: false, error: 'Clave incorrecta (modo demo: usa "demo")' });
@@ -471,12 +528,14 @@
         if (body.action === 'login') return res({ ok: true, config: {
           persons: ['Tarjeta empresa', 'Persona A', 'Persona B', 'Persona C'].map(function (n) { return { name: n, reimbursable: n !== 'Tarjeta empresa', noPin: n === 'Tarjeta empresa' }; }),
           events: [{ id: 'e1', label: 'Evento de ejemplo 1', quarter: 1 }, { id: 'e2', label: 'Evento de ejemplo 2', quarter: 2 }, { id: 'general', label: 'Gastos generales (sin evento)', quarter: 0 }],
-          concepts: ['Vuelos/Barco', 'Diésel', 'Peajes/Parking', 'Comida', 'Hotel/Apartamentos', 'Otros', 'Honorarios profesionales'] } });
+          concepts: ['Vuelos/Barco', 'Diésel', 'Peajes/Parking', 'Comida', 'Hotel/Apartamentos', 'Supermercado', 'Otros', 'Honorarios profesionales', 'Media/Filmaker', 'Social media'],
+          irpfConcepts: ['Honorarios profesionales', 'Media/Filmaker', 'Social media'],
+          ivaDefaults: { 'Diésel': '21', 'Peajes/Parking': '21', 'Hotel/Apartamentos': '10', 'Comida': '10', 'Coche de alquiler': '21' } } });
         if (body.action === 'submit') {
           var dup = mockDb.filter(function (x) { return x.clientId === body.clientId; })[0]; if (dup) return res({ ok: true, id: dup.id, already: true, reimbursable: dup.reimb });
           var id = 'DEMO-' + (mockDb.length + 1), reimb = body.data.person !== 'Tarjeta empresa';
           mockDb.push({ id: id, clientId: body.clientId, reimb: reimb, date: body.data.date, event: body.data.eventId, concept: body.data.concept, supplier: body.data.supplier, amount: body.data.amount, person: body.data.person, status: reimb ? 'Pendiente' : 'No aplica' });
-          console.log('[demo] gasto guardado', id, body.data); return res({ ok: true, id: id, reimbursable: reimb });
+          console.log('[demo] gasto guardado', id, body.data); return res({ ok: true, id: id, reimbursable: reimb, auto: !!window.__mockAuto });
         }
         if (body.action === 'mine') {
           var mine = mockDb.filter(function (x) { return x.person === body.person; }), sum = function (st) { return mine.filter(function (x) { return x.status === st; }).reduce(function (a, x) { return a + x.amount; }, 0); };
@@ -497,7 +556,7 @@
   $('pin').addEventListener('change', verifyPin);
   $('person').addEventListener('change', onPersonChange);
   ['mb21', 'mb10', 'mb4', 'mb0'].forEach(function (i) { $(i).addEventListener('input', updateMulti); }); ['mc21', 'mc10', 'mc4'].forEach(function (i) { $(i).addEventListener('input', function () { $(i).dataset.manual = $(i).value.trim() ? '1' : ''; updateMulti(); }); });
-  $('docType').addEventListener('change', updateDoc); $('nif').addEventListener('input', updateNif); $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', updateIva); $('irpfRate').addEventListener('change', updateIva); $('irpfOther').addEventListener('input', updateIva); $('concept').addEventListener('change', updateIva); $('person').addEventListener('change', updateIva);
+  $('docType').addEventListener('change', updateDoc); $('nif').addEventListener('input', updateNif); $('amount').addEventListener('input', updateIva); $('ivaRate').addEventListener('change', onIvaChange); $('event').addEventListener('change', function () { state.eventManual = true; updateEventHint(); }); $('irpfRate').addEventListener('change', updateIva); $('irpfOther').addEventListener('input', updateIva); $('concept').addEventListener('change', onConceptChange); $('person').addEventListener('change', updateIva);
   $('amount').addEventListener('blur', function () { var a = parseAmount(this.value); if (!isNaN(a) && a > 0) this.value = a.toFixed(2).replace('.', ','); updateIva(); });
   $('btnCamera').addEventListener('click', function () { $('fileCamera').click(); });
   $('btnGallery').addEventListener('click', function () { $('fileGallery').click(); });
@@ -505,9 +564,7 @@
   $('fileGallery').addEventListener('change', function () { addFiles(this.files); this.value = ''; });
   $('expenseForm').addEventListener('submit', submit);
   $('againBtn').addEventListener('click', resetForAnother);
-  $('queueRetry').addEventListener('click', function () {
-    qAll().then(function (items) { return Promise.all(items.filter(function (i) { return i.failedMsg; }).map(function (i) { delete i.failedMsg; return qPut(i); })); }).then(function () { if (!navigator.onLine) toast('Aún no hay cobertura'); state.offline = false; return flushQueue(); });
-  });
+  $('queueRetry').addEventListener('click', function () { if (!navigator.onLine) toast('Aún no hay cobertura'); state.offline = false; retryFailed(''); });
   $('queueForce').addEventListener('click', function () {
     qAll().then(function (items) { return Promise.all(items.filter(function (i) { return i.dupe; }).map(function (i) { delete i.failedMsg; i.forceSend = true; return qPut(i); })); }).then(function () { if (navigator.onLine) flushQueue(); else renderQueue(); });
   });

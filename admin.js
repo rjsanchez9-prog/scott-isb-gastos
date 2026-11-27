@@ -8,7 +8,23 @@
   state.rf = newF(); state.hf = newF();
   var QUARTERS = ['2026-T4', '2027-T1', '2027-T2', '2027-T3', '2027-T4', '2028-T1'];
 
-  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+  /** Escapa texto para meterlo en HTML o dentro de atributos (value="...", data-*="..."). */
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  /** Importe escrito a mano -> número. «1.500» = 1500; «1.500,25» = 1500,25; «12,5» = 12,5; «1.5» = 1,5. Vacío = 0; no válido = NaN. */
+  function num(v) {
+    v = String(v == null ? '' : v).trim().replace(/[\s€]/g, ''); if (!v) return 0;
+    var neg = /^[-−]/.test(v); v = v.replace(/^[-−+]/, '');
+    var c = v.lastIndexOf(','), d = v.lastIndexOf('.');
+    if (c > -1 && d > -1) v = c > d ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, '');
+    else if (c > -1) v = (v.match(/,/g).length > 1 && /^[1-9]\d{0,2}(,\d{3})+$/.test(v)) ? v.replace(/,/g, '') : v.replace(',', '.');
+    else if (d > -1 && /^[1-9]\d{0,2}(\.\d{3})+$/.test(v)) v = v.replace(/\./g, '');
+    if (!/^(\d+\.?\d*|\.\d+)$/.test(v)) return NaN;
+    return neg ? -Number(v) : Number(v);
+  }
+  function fmtS(n) { n = Number(n) || 0; return (n > 0 ? '+' : '') + fmt(n); }
+  /** «2027-01-20 10:15» -> «20/01». */
+  function ddmm(s) { s = String(s || ''); return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(8, 10) + '/' + s.slice(5, 7) : ''; }
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
   function fmt(n) { return Number(n || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function toast(m) { var t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(function () { t.hidden = true; }, 5000); }
   function busy(on, txt) { $('busy').hidden = !on; if (txt) $('busyText').textContent = txt; }
@@ -19,6 +35,7 @@
   function api(body) {
     if (MOCK) return mockApi(body);
     body.adminKey = state.key;
+    if (CFG.env) body.env = CFG.env;
     return fetch(CFG.backendUrl, { method: 'POST', body: JSON.stringify(body), redirect: 'follow' })
       .then(function (r) { return r.json(); })
       .catch(function () { return { ok: false, error: 'Sin conexión con el servidor. Inténtalo de nuevo.' }; });
@@ -55,7 +72,7 @@
   /* ---------- filtros (los comparten Revisar e Histórico) ---------- */
   var FKEYS = ['person', 'event', 'status', 'q', 'from', 'to', 'min', 'max'];
   function newF() { return { person: '', event: '', status: '', q: '', from: '', to: '', min: '', max: '' }; }
-  function fnum(s) { var n = parseFloat(String(s).replace(',', '.')); return isNaN(n) ? null : n; }
+  function fnum(s) { if (String(s == null ? '' : s).trim() === '') return null; var n = num(s); return isNaN(n) ? null : n; }
   function fOpts(o, cur, all) { return '<option value="">' + all + '</option>' + Object.keys(o).sort().map(function (k) { return '<option value="' + esc(k) + '"' + (k === cur ? ' selected' : '') + '>' + esc(k) + ' (' + o[k] + ')</option>'; }).join(''); }
   function filtMatch(f, x) {
     var mn = fnum(f.min), mx = fnum(f.max), a = Number(x.amount) || 0, q = String(f.q || '').toLowerCase();
@@ -96,6 +113,7 @@
     var r = state.rep, list = r.porRevisar || [], html = '';
     var inc = []; (r.pending || []).forEach(function (p) { p.items.forEach(function (i) { if (i.review === 'Incidencia') inc.push(Object.assign({ person: p.person }, i)); }); });
     $('nRev').textContent = list.length ? '(' + list.length + ')' : '';
+    html += hoyHtml(list, inc.length);
     if (list.length > 1) html += filtHtml('rf', state.rf, list, false);
     html += '<div id="rfList"></div>';
     if (inc.length) {
@@ -110,10 +128,28 @@
     drawRevList();
     Array.prototype.forEach.call($('tab-rev').querySelectorAll('.acard[data-id]'), function (c) { if (c.closest('#rfList')) return; bindCard(c); });
   }
+  /** Dinero listo para liquidar (gastos revisados, neto) de una persona de «pending». */
+  function readyOf(p) { return Math.round(p.items.filter(function (i) { return i.review === 'Revisado'; }).reduce(function (a, i) { return a + (Number(i.net) || 0); }, 0) * 100) / 100; }
+  function daysText(n) { n = Number(n); return n === 0 ? 'hoy' : (n === 1 ? 'mañana' : (n > 1 ? 'en ' + n + ' días' : 'vencido hace ' + Math.abs(n) + (Math.abs(n) === 1 ? ' día' : ' días'))); }
+  /** Tarjeta «Hoy» (resumen) y avisos ámbar del servidor. */
+  function hoyHtml(list, nInc) {
+    var r = state.rep, tot = list.reduce(function (a, x) { return a + (Number(x.amount) || 0); }, 0), ready = 0, people = 0, nd = r.nextDeadline, h;
+    (r.pending || []).forEach(function (p) { var v = readyOf(p); if (v > 0) { ready += v; people++; } });
+    h = '<div class="acard hoy"><div class="hhd">Hoy</div>'
+      + '<div class="hrow"><span>Por revisar</span><b>' + (list.length ? list.length + ' (' + fmt(tot) + ' €)' : 'nada') + '</b></div>'
+      + '<div class="hrow"><span>Con incidencia</span><b>' + nInc + '</b></div>'
+      + '<div class="hrow"><span>Listo para liquidar</span><b>' + (people ? fmt(ready) + ' € (de ' + plural(people, 'persona', 'personas') + ')' : '0,00 €') + '</b></div>'
+      + (nd && nd.title ? '<div class="hrow plazo"><span>Próximo plazo: <b>' + esc(nd.title) + '</b>' + (ddmm(nd.date) ? ' · ' + esc(ddmm(nd.date)) : '') + (nd.days != null ? ' (' + esc(daysText(nd.days)) + ')' : '') + '</span></div>' : '')
+      + '</div>';
+    (r.warnings || []).forEach(function (w) { h += '<div class="note warn">' + esc(w) + '</div>'; });
+    return h;
+  }
   function revFiltered() { return (state.rep.porRevisar || []).filter(function (x) { return filtMatch(state.rf, x); }); }
   function drawRevList() {
     var all = state.rep.porRevisar || [], list = revFiltered(), html = '';
     var filtered = list.length !== all.length, tot = list.reduce(function (a, x) { return a + (Number(x.amount) || 0); }, 0);
+    var pp = state.rf.person && (state.rep.pending || []).filter(function (p) { return p.person === state.rf.person; })[0], pready = pp ? readyOf(pp) : 0;
+    if (pready > 0) html += '<div class="note strip"><span>' + esc(state.rf.person) + ': <b>' + fmt(pready) + ' €</b> listos para liquidar</span><button id="goLiq" class="abtn go" type="button">Ir a liquidar</button></div>';
     html += '<div class="sec"><span>' + (filtered ? 'Por revisar · ' + list.length + ' de ' + all.length : 'Por revisar') + '</span>' + (list.length > 1 ? '<button class="abtn go" id="apAll" type="button">Aprobar ' + (filtered ? 'estos ' : 'los ') + list.length + '</button>' : '') + '</div>';
     if (filtered && list.length) html += '<p class="muted small rfsum">' + list.length + ' gastos · ' + fmt(tot) + ' €</p>';
     if (!all.length) html += '<p class="empty">No hay gastos por revisar.</p>';
@@ -126,11 +162,17 @@
         + '<div class="inl" hidden><input type="text" placeholder="¿Qué pasa? (ej. falta el NIF)"><button class="abtn wr" data-act="incsave" type="button">Guardar</button></div></div>';
     });
     $('rfList').innerHTML = html;
+    var gl = $('goLiq'); if (gl) gl.addEventListener('click', function () { goLiquidar(state.rf.person); });
     var btn = $('apAll'); if (btn) btn.addEventListener('click', function () {
       var what = filtered ? 'los ' + list.length + ' gastos filtrados (' + fmt(tot) + ' €)' : 'los ' + list.length + ' gastos (' + fmt(tot) + ' €)';
       if (window.confirm('¿Aprobar ' + what + '? Hazlo solo si has mirado los justificantes.')) review(list.map(function (x) { return x.id; }), 'Revisado', '');
     });
     Array.prototype.forEach.call($('rfList').querySelectorAll('.acard'), bindCard);
+  }
+  function goLiquidar(person) {
+    selectTab('liq');
+    var c = Array.prototype.filter.call($('tab-liq').querySelectorAll('.acard[data-p]'), function (x) { return x.dataset.p === person; })[0];
+    if (c) { c.scrollIntoView({ block: 'start' }); c.classList.add('flash'); setTimeout(function () { c.classList.remove('flash'); }, 2500); }
   }
   function bindCard(c) {
     var id = c.dataset.id, inl = c.querySelector('.inl');
@@ -139,6 +181,8 @@
         var a = b.dataset.act;
         if (a === 'ap') review([id], 'Revisado', '');
         else if (a === 'fix') { var it = findItem(id); if (it) openFix(it); }
+        else if (a === 'void') { var iv = findItem(id); if (iv) voidDlg(iv); }
+        else if (a === 'unliq') { var iu = findItem(id); if (iu) unliqDlg(iu); }
         else if (a === 'inc') { inl.hidden = !inl.hidden; if (!inl.hidden) inl.querySelector('input').focus(); }
         else if (a === 'incsave') { var n = inl.querySelector('input').value.trim(); if (!n) { toast('Escribe qué pasa con el gasto.'); return; } review([id], 'Incidencia', n); }
       });
@@ -173,6 +217,7 @@
       + '<label>Motivo de la corrección (obligatorio)<input id="fxWhy" type="text" placeholder="ej. importe mal leído"></label></div>'
       + '<p class="muted small">El gasto original queda anulado, con tu motivo, y se crea uno nuevo con estos datos y los mismos justificantes. El nuevo vuelve a quedar <b>por revisar</b>. Todo queda anotado en la pestaña «Cambios».</p>'
       + '<div class="acts"><button id="fxSave" class="abtn go" type="button">Guardar corrección</button><button id="fxCancel" class="abtn link" type="button">Cancelar</button></div><div id="fxMsg" class="msg"></div>';
+    $('fixTitle').textContent = 'Corregir gasto';
     $('fixBody').innerHTML = h; $('fix').hidden = false; document.body.classList.add('modal'); $('fix').scrollTop = 0; touch();
     $('fxCon').addEventListener('change', function () { $('fxIrW').hidden = $('fxCon').value !== m.honorarios; });
     $('fxCancel').addEventListener('click', closeFix);
@@ -194,6 +239,36 @@
         closeFix(); state.hist = null; reload('Corregido. El gasto nuevo ha quedado por revisar.');
       });
     });
+  }
+  /** Cuadro propio (sin window.prompt) que pide un motivo y lo envía al servidor. o: {title, intro (HTML ya escapado), label, ph, ok, call(motivo)->cuerpo, after(res, motivo)}. */
+  function openReason(o) {
+    $('fixTitle').textContent = o.title;
+    $('fixBody').innerHTML = o.intro + '<div class="frm"><label>' + esc(o.label || 'Motivo (obligatorio)') + '<input id="rsWhy" type="text" maxlength="200" placeholder="' + esc(o.ph || '') + '"></label></div>'
+      + '<div class="acts"><button id="rsOk" class="abtn wr" type="button">' + esc(o.ok) + '</button><button id="rsCancel" class="abtn link" type="button">Cancelar</button></div><div id="rsMsg" class="msg"></div>';
+    $('fix').hidden = false; document.body.classList.add('modal'); $('fix').scrollTop = 0; touch();
+    $('rsCancel').addEventListener('click', closeFix);
+    $('rsOk').addEventListener('click', function () {
+      var why = $('rsWhy').value.trim(); if (!why) { msg('rsMsg', 'Escribe el motivo.', false); return; }
+      busy(true, 'Guardando…'); touch();
+      api(o.call(why)).then(function (res) {
+        busy(false);
+        if (!res || !res.ok) { msg('rsMsg', srvErr(res, 'No se pudo guardar'), false); return; }
+        closeFix(); o.after(res, why);
+      });
+    });
+  }
+  function itemLine(it) { return '<p class="muted small" style="margin:0 0 8px"><b>' + esc(it.supplier || it.concept) + '</b> · ' + esc(it.person) + ' · ' + esc(it.date) + ' · ' + fmt(it.amount) + ' €</p>'; }
+  function voidDlg(it) {
+    openReason({ title: 'Anular gasto', ok: 'Sí, anular el gasto', ph: 'ej. duplicado, no es del equipo',
+      intro: itemLine(it) + '<p class="muted small">El gasto queda <b>anulado</b>: deja de contar en liquidaciones e impuestos. No se borra; queda anotado con tu motivo en la pestaña «Cambios».</p>',
+      call: function (why) { return { action: 'adminVoid', id: it.id, reason: why }; },
+      after: function () { state.hist = null; reload('Gasto anulado.'); } });
+  }
+  function unliqDlg(it) {
+    openReason({ title: 'Deshacer liquidación', ok: 'Sí, deshacer la liquidación', ph: 'ej. la transferencia no se hizo',
+      intro: itemLine(it) + '<p class="muted small">El gasto vuelve a quedar <b>«Pendiente»</b> (por liquidar) y la reversión se anota en la pestaña «Cambios». Esto <b>no devuelve dinero</b>: solo corrige el registro. Hazlo solo si el pago no se hizo o estaba mal.</p>',
+      call: function (why) { return { action: 'unliquidate', person: it.person, ids: [it.id], reason: why }; },
+      after: function () { state.hist = null; reload('Liquidación deshecha: el gasto vuelve a estar pendiente.'); } });
   }
   function closeFix() { $('fix').hidden = true; document.body.classList.remove('modal'); }
   function srvErr(res, def) { var e = res && res.error; return e === 'Clave incorrecta' ? 'Esta función aún no está en el servidor (falta desplegar la versión nueva).' : (e || def); }
@@ -222,11 +297,12 @@
     shown.forEach(function (x) {
       var cls = x.status === 'Liquidado' ? 'rev' : (x.status === 'Anulado' ? 'inc' : ''), lab = x.status === 'Pendiente' ? 'Por liquidar' : (x.status === 'No aplica' ? 'Sin liquidar' : x.status);
       var rv = x.status === 'Anulado' ? '' : (x.review ? ' <span class="pill ' + (x.review === 'Revisado' ? 'rev' : 'inc') + '">' + esc(x.review) + '</span>' : ' <span class="pill">Por revisar</span>');
-      var fl = files(x.files), canFix = x.status !== 'Liquidado' && x.status !== 'Anulado';
+      var fl = files(x.files), canFix = x.status !== 'Liquidado' && x.status !== 'Anulado', canUnliq = x.status === 'Liquidado';
+      var auto = String(x.reviewNote || '').indexOf('Auto') >= 0 && x.status !== 'Anulado' ? ' <span class="pill auto">Auto</span>' : '';
       html += '<div class="acard" data-id="' + esc(x.id) + '"><div class="top1"><div><div class="ttl">' + esc(x.supplier || x.concept) + '</div><div class="sub2">' + esc(x.person) + ' · ' + esc(x.date) + ' · ' + esc(x.event) + '</div><div class="sub2">' + esc(x.concept) + ' · ' + esc(x.docType || '') + (x.docNumber ? ' nº ' + esc(x.docNumber) : '') + '</div>'
-        + '<div class="sub2"><span class="pill ' + cls + '">' + esc(lab) + '</span>' + (x.status === 'Liquidado' && x.paidOn ? ' ' + esc(x.paidOn) : '') + rv + '</div>'
+        + '<div class="sub2"><span class="pill ' + cls + '">' + esc(lab) + '</span>' + (x.status === 'Liquidado' && x.paidOn ? ' ' + esc(x.paidOn) : '') + rv + auto + '</div>'
         + (x.status === 'Anulado' && x.voidNote ? '<div class="sub2">' + esc(x.voidNote) + '</div>' : '') + (x.review === 'Incidencia' && x.reviewNote ? '<div class="sub2">' + esc(x.reviewNote) + '</div>' : '') + '</div><div class="amt">' + fmt(x.amount) + ' €</div></div>'
-        + ((fl.length || canFix) ? '<div class="acts">' + fl.map(function (u, k) { return '<a class="abtn link" target="_blank" rel="noopener" href="' + esc(u) + '">Ver justificante' + (fl.length > 1 ? ' ' + (k + 1) : '') + '</a>'; }).join('') + (canFix ? '<button class="abtn link" data-act="fix" type="button">Corregir</button>' : '') + '</div>' : '') + '</div>';
+        + ((fl.length || canFix || canUnliq) ? '<div class="acts">' + fl.map(function (u, k) { return '<a class="abtn link" target="_blank" rel="noopener" href="' + esc(u) + '">Ver justificante' + (fl.length > 1 ? ' ' + (k + 1) : '') + '</a>'; }).join('') + (canFix ? '<button class="abtn link" data-act="fix" type="button">Corregir</button><button class="abtn wr" data-act="void" type="button">Anular</button>' : '') + (canUnliq ? '<button class="abtn wr" data-act="unliq" type="button">Deshacer liquidación</button>' : '') + '</div>' : '') + '</div>';
     });
     if (list.length > shown.length) html += '<button id="hisMore" class="btn" type="button">Mostrar más (' + (list.length - shown.length) + ')</button>';
     $('hfList').innerHTML = html;
@@ -235,12 +311,28 @@
   }
   function review(ids, status, note) {
     busy(true, 'Guardando…'); touch();
-    api({ action: 'adminReview', ids: ids, status: status, note: note }).then(function (res) { busy(false); if (!res || !res.ok) { toast((res && res.error) || 'No se pudo guardar'); return; } reload(status === 'Revisado' ? ids.length + ' gasto(s) aprobado(s)' : 'Incidencia anotada'); });
+    api({ action: 'adminReview', ids: ids, status: status, note: note }).then(function (res) {
+      busy(false); if (!res || !res.ok) { toast((res && res.error) || 'No se pudo guardar'); return; }
+      var n = res.n != null ? Number(res.n) : ids.length, nf = res.noEncontrados, nfn = Array.isArray(nf) ? nf.length : (Number(nf) || 0);
+      var m = n === 0 ? 'No se ha cambiado ningún gasto' : (status === 'Revisado' ? (n === 1 ? '1 gasto aprobado' : n + ' gastos aprobados') : (n === 1 ? 'Incidencia anotada en 1 gasto' : 'Incidencia anotada en ' + n + ' gastos'));
+      if (nfn) m += ' · ' + (nfn === 1 ? '1 no se ha encontrado' : nfn + ' no se han encontrado');
+      reload(m);
+    });
   }
 
   /* ---------- pestaña Liquidar ---------- */
+  function copyText(t) {
+    function legacy() {
+      var ta = document.createElement('textarea'), ok = false; ta.value = t; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta); ta.select(); try { ta.setSelectionRange(0, t.length); ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta); return ok;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(function () { return true; }, function () { return legacy(); });
+    return Promise.resolve(legacy());
+  }
   function renderLiq() {
-    var r = state.rep, html = '<div class="sec"><span>Pendiente de liquidar</span></div>';
+    var r = state.rep, html = '', trf = (r.pending || []).filter(function (p) { return readyOf(p) > 0; });
+    html += '<div class="sec"><span>Pendiente de liquidar</span>' + (trf.length ? '<button id="copyTr" class="abtn link" type="button">Copiar lista de transferencias</button>' : '') + '</div>';
     if (!(r.pending || []).length) html += '<p class="empty">No hay nada pendiente de liquidar.</p>';
     (r.pending || []).forEach(function (p) {
       var ok = p.items.filter(function (i) { return i.review === 'Revisado'; }), okTot = ok.reduce(function (a, i) { return a + (Number(i.net) || 0); }, 0), sin = p.items.length - ok.length;
@@ -251,6 +343,11 @@
         + '<div class="inl" hidden><input type="text" placeholder="Nota (ej. transferencia 27/11)" value="transferencia ' + today().slice(8, 10) + '/' + today().slice(5, 7) + '"><button class="abtn go" data-act="liqgo" type="button">Confirmar</button></div></div>';
     });
     $('tab-liq').innerHTML = html;
+    var ct = $('copyTr'); if (ct) ct.addEventListener('click', function () {
+      var d = today(), lines = trf.map(function (p) { return p.person + ' · ' + fmt(readyOf(p)) + ' € · transferencia ' + d.slice(8, 10) + '/' + d.slice(5, 7); }), text = lines.join('\n');
+      touch();
+      copyText(text).then(function (ok) { toast(ok ? 'Copiada la lista: ' + plural(lines.length, 'transferencia', 'transferencias') + '. Pégala donde la necesites.' : 'No se pudo copiar. Hazlo a mano o prueba con otro navegador.'); });
+    });
     Array.prototype.forEach.call($('tab-liq').querySelectorAll('.acard'), function (c) {
       var person = c.dataset.p, p = (state.rep.pending || []).filter(function (x) { return x.person === person; })[0], inl = c.querySelector('.inl');
       var ok = p.items.filter(function (i) { return i.review === 'Revisado'; }), okTot = Math.round(ok.reduce(function (a, i) { return a + (Number(i.net) || 0); }, 0) * 100) / 100;
@@ -268,16 +365,25 @@
   function renderImp() {
     var r = state.rep, t = r.impuestos || [], html = '';
     html += '<div class="sec"><span>IVA e IRPF por trimestre</span></div>';
-    if (r.ivaCarry) html += '<p class="muted small">Saldo de IVA a favor de ' + esc(r.ivaCarry.from) + ' a compensar en 2027: <b>' + fmt(r.ivaCarry.amount) + ' €</b> (' + esc(r.ivaCarry.status) + ').</p>';
+    var cy = r.ivaCarry;
+    html += '<div class="acard"><div class="top1"><div><div class="ttl">Saldo de IVA a favor de 2026' + (cy ? ' <span class="pill ' + (cy.status === 'definitivo' ? 'rev' : 'pend') + '">' + (cy.status === 'definitivo' ? 'Definitivo' : 'Provisional') + '</span>' : '') + '</div>'
+      + '<div class="sub2">' + (cy ? 'A compensar en 2027' + (ddmm(cy.at) ? ' · anotado el ' + esc(ddmm(cy.at)) : '') : 'Todavía no hay saldo anotado.') + '</div>' + (cy && cy.note ? '<div class="sub2">' + esc(cy.note) + '</div>' : '') + '</div>'
+      + '<div class="amt">' + (cy ? fmt(cy.amount) + ' €' : '—') + '</div></div>'
+      + '<details class="more2" style="margin:10px 0 0"><summary>Cambiar el saldo</summary><div class="frm"><div class="row"><input id="cAmt" type="text" inputmode="decimal" placeholder="Importe (€)" value="' + (cy ? esc(String(cy.amount).replace('.', ',')) : '') + '"><select id="cSt"><option value="provisional"' + (cy && cy.status === 'definitivo' ? '' : ' selected') + '>Provisional</option><option value="definitivo"' + (cy && cy.status === 'definitivo' ? ' selected' : '') + '>Definitivo</option></select></div>'
+      + '<input id="cNote" type="text" placeholder="Nota (ej. según el modelo 303 del 4T)"><p class="muted small" style="margin:0">«Provisional» si la cifra aún puede cambiar; «Definitivo» si ya está presentada.</p><button id="cGo" class="abtn go" type="button">Guardar saldo</button><div id="cMsg" class="msg"></div></div></details></div>';
     t.forEach(function (x) {
-      if (!x.facturasEmitidas && !x.ivaSop && !x.irpf && !x.ivaPaid && !x.irpfPaid) return;
-      html += '<div class="acard"><div class="top1"><div class="ttl">' + esc(x.quarter) + '</div><div class="amt">IVA a ingresar ' + fmt(x.ivaToPay) + ' €</div></div>'
+      var mov = x.facturasEmitidas || x.ivaSop || x.irpf || x.ivaPaid || x.irpfPaid;
+      if (!mov && !x.closed) return;
+      var lt = x.late || {}, late = x.closed && (Number(lt.ivaRep) || Number(lt.ivaSop) || Number(lt.irpf));
+      html += '<div class="acard"><div class="top1"><div class="ttl">' + esc(x.quarter) + (x.closed ? ' <span class="pill rev">Cerrado ' + esc(ddmm(x.closed)) + '</span>' : '') + '</div><div class="amt">IVA a ingresar ' + fmt(x.ivaToPay) + ' €</div></div>'
         + '<div class="qrow"><span>IVA repercutido / soportado</span><span class="n">' + fmt(x.ivaRep) + ' €</span><span class="n">' + fmt(x.ivaSop) + ' €</span></div>'
         + '<div class="qrow"><span>Saldo a compensar (anterior → siguiente)</span><span class="n">' + fmt(x.carryIn) + ' €</span><span class="n">' + fmt(x.carryOut) + ' €</span></div>'
         + '<div class="qrow"><span>IVA ingresado / pendiente</span><span class="n">' + fmt(x.ivaPaid) + ' €</span><span class="n">' + fmt(x.ivaPending) + ' €</span></div>'
-        + '<div class="qrow"><span>IRPF retenido / ingresado / pendiente</span><span class="n">' + fmt(x.irpf) + ' € · ' + fmt(x.irpfPaid) + ' €</span><span class="n">' + fmt(x.irpfPending) + ' €</span></div></div>';
+        + '<div class="qrow"><span>IRPF retenido / ingresado / pendiente</span><span class="n">' + fmt(x.irpf) + ' € · ' + fmt(x.irpfPaid) + ' €</span><span class="n">' + fmt(x.irpfPending) + ' €</span></div>'
+        + (late ? '<div class="note warn">Cambios posteriores al cierre: IVA soportado ' + fmtS(lt.ivaSop) + ' €, repercutido ' + fmtS(lt.ivaRep) + ' €, IRPF ' + fmtS(lt.irpf) + ' €</div>' : '')
+        + '<div class="acts">' + (x.closed ? '<button class="abtn link" data-act="reopenq" data-q="' + esc(x.quarter) + '" type="button">Reabrir</button>' : '<button class="abtn link" data-act="closeq" data-q="' + esc(x.quarter) + '" type="button">Cerrar trimestre</button>') + '</div></div>';
     });
-    if (!t.some(function (x) { return x.facturasEmitidas || x.ivaSop || x.irpf || x.ivaPaid || x.irpfPaid; })) html += '<p class="empty">Todavía no hay movimientos de IVA o IRPF en 2027.</p>';
+    if (!t.some(function (x) { return x.facturasEmitidas || x.ivaSop || x.irpf || x.ivaPaid || x.irpfPaid || x.closed; })) html += '<p class="empty">Todavía no hay movimientos de IVA o IRPF en 2027.</p>';
     if (r.impuestos2026T4) html += '<p class="muted small">2026-T4 (se declara con el Excel de 2026): IVA soportado deducible registrado aquí ' + fmt(r.impuestos2026T4.ivaSop) + ' €, IRPF retenido ' + fmt(r.impuestos2026T4.irpf) + ' €.</p>';
     var qopts = QUARTERS.slice(1).map(function (q) { return '<option>' + q + '</option>'; }).join(''), allq = QUARTERS.map(function (q) { return '<option>' + q + '</option>'; }).join('');
     html += '<details class="more2"><summary>Anotar un pago de impuestos</summary><div class="frm"><div class="row"><select id="pTax"><option>IVA</option><option>IRPF</option></select><select id="pQ">' + qopts + '</select></div>'
@@ -287,14 +393,41 @@
       + '<input id="eBase" type="text" inputmode="decimal" placeholder="Base imponible (€)"><input id="eNote" type="text" placeholder="Notas (opcional)"><input id="eFile" type="file" accept="application/pdf,image/*"><label class="check"><input id="eCredit" type="checkbox"> Es un abono (importe en negativo)</label><button id="eGo" class="abtn go" type="button">Registrar factura</button><div id="eMsg" class="msg"></div></div></details>';
     html += '<details class="more2"><summary>Exportar para la gestoría</summary><div class="frm"><div class="row"><select id="xFrom">' + allq + '</select><select id="xTo">' + allq + '</select></div><button id="xGo" class="abtn go" type="button">Crear hoja de exportación</button><div id="xMsg" class="msg"></div></div></details>';
     html += '<div class="sec"><span>Facturas emitidas recientes</span></div>';
-    var em = r.emitidas || []; html += em.length ? em.map(function (e) { return '<div class="acard"><div class="top1"><div><div class="ttl">' + esc(e.client) + '</div><div class="sub2">nº ' + esc(e.number) + ' · ' + esc(e.date) + ' · ' + esc(e.quarter) + '</div></div><div class="amt">' + fmt(e.total) + ' €</div></div></div>'; }).join('') : '<p class="empty">Aún no hay facturas emitidas de 2027.</p>';
+    var em = r.emitidas || []; html += em.length ? em.map(function (e) { return '<div class="acard"><div class="top1"><div><div class="ttl">' + esc(e.client) + '</div><div class="sub2">nº ' + esc(e.number) + ' · ' + esc(e.date) + ' · ' + esc(e.quarter) + '</div></div><div class="amt">' + fmt(e.total) + ' €</div></div><div class="acts"><button class="abtn wr" data-act="ivoid" data-id="' + esc(e.id) + '" type="button">Anular</button></div></div>'; }).join('') : '<p class="empty">Aún no hay facturas emitidas de 2027.</p>';
     html += '<div class="sec"><span>Pagos de impuestos anotados</span></div>';
     var pg = r.pagos || []; html += pg.length ? pg.map(function (e) { return '<div class="acard"><div class="top1"><div><div class="ttl">' + esc(e.tax) + ' ' + esc(e.quarter) + '</div><div class="sub2">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + '</div></div><div class="amt">' + fmt(e.amount) + ' €</div></div></div>'; }).join('') : '<p class="empty">Aún no hay pagos anotados.</p>';
     $('tab-imp').innerHTML = html;
     wireImp();
   }
-  function num(v) { v = String(v || '').trim().replace(/[\s€]/g, ''); var c = v.lastIndexOf(','), d = v.lastIndexOf('.'); if (c > -1 && d > -1) v = c > d ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, ''); else v = v.replace(',', '.'); return Number(v); }
   function msg(id, text, ok) { var m = $(id); m.textContent = text; m.className = 'msg ' + (ok ? 'good' : 'bad'); }
+  /** Cierra un trimestre: pide confirmación; si el servidor dice que hay bloqueos, los enseña y ofrece «Cerrar igualmente». */
+  function closeQuarter(q, force) {
+    if (!force && !window.confirm('¿Cerrar el trimestre ' + q + '? Se guardan las cifras de IVA e IRPF de hoy y, si después cambia algo, te lo avisaremos aquí. Puedes reabrirlo cuando quieras.')) return;
+    busy(true, 'Cerrando…'); touch();
+    api({ action: 'adminCloseQuarter', quarter: q, force: force === true }).then(function (res) {
+      busy(false);
+      if (res && res.ok) {
+        closeFix();
+        var w = (res.checks || []).filter(function (c) { return c.n > 0; }).map(function (c) { return c.label + ' (' + c.n + ')'; });
+        reload('Trimestre ' + q + ' cerrado' + (w.length ? '. Avisos: ' + w.join(', ') : '') + '.'); return;
+      }
+      if (res && res.blockers) { blockersDlg(q, res.checks || []); return; }
+      toast(srvErr(res, 'No se pudo cerrar el trimestre'));
+    });
+  }
+  function blockersDlg(q, checks) {
+    var bad = checks.filter(function (c) { return c.n > 0; });
+    $('fixTitle').textContent = 'No se puede cerrar ' + q + ' todavía';
+    $('fixBody').innerHTML = '<p class="muted small" style="margin:0 0 8px">Esto está pendiente en el trimestre:</p><ul class="blk">' + bad.map(function (c) { return '<li><span>' + esc(c.label) + '</span><b>' + esc(c.n) + '</b>' + (c.blocks ? '<span class="pill inc">Bloquea</span>' : '<span class="pill pend">Aviso</span>') + '</li>'; }).join('') + '</ul>'
+      + '<p class="muted small">Lo mejor es resolverlo y volver a intentarlo. Si aun así quieres cerrarlo, queda anotado que se cerró con avisos.</p>'
+      + '<div class="acts"><button id="blkForce" class="abtn wr" type="button">Cerrar igualmente</button><button id="blkCancel" class="abtn link" type="button">Cancelar</button></div>';
+    $('fix').hidden = false; document.body.classList.add('modal'); $('fix').scrollTop = 0;
+    $('blkCancel').addEventListener('click', closeFix);
+    $('blkForce').addEventListener('click', function () {
+      if (!window.confirm('Vas a cerrar ' + q + ' con ' + bad.filter(function (c) { return c.blocks; }).length + ' bloqueo(s) sin resolver. ¿Cerrarlo igualmente?')) return;
+      closeFix(); closeQuarter(q, true);
+    });
+  }
   function wireImp() {
     function sendPago(force) {
       var a = num($('pAmt').value); if (isNaN(a) || a === 0) { msg('pMsg', 'Escribe el importe.', false); return; }
@@ -307,6 +440,32 @@
       });
     }
     $('pGo').addEventListener('click', function () { sendPago(false); });
+    $('cGo').addEventListener('click', function () {
+      var a = num($('cAmt').value), st = $('cSt').value, from = (state.rep.ivaCarry && state.rep.ivaCarry.from) || '2026-T4';
+      if ($('cAmt').value.trim() === '' || isNaN(a) || a < 0) { msg('cMsg', 'Escribe el importe del saldo (0 si no hay).', false); return; }
+      if (!window.confirm('¿Cambiar el saldo de IVA a favor de 2026 a ' + fmt(a) + ' € (' + st + ')? Se recalculan los trimestres de 2027 y el cambio queda anotado.')) return;
+      busy(true, 'Guardando…'); touch();
+      api({ action: 'adminSetCarry', amount: a, status: st, note: $('cNote').value.trim(), from: from }).then(function (res) {
+        busy(false);
+        if (!res || !res.ok) { msg('cMsg', srvErr(res, 'No se pudo guardar el saldo'), false); return; }
+        reload('Saldo de IVA guardado: ' + fmt(a) + ' € (' + st + ')');
+      });
+    });
+    Array.prototype.forEach.call($('tab-imp').querySelectorAll('[data-act]'), function (b) {
+      b.addEventListener('click', function () {
+        var a = b.dataset.act, q = b.dataset.q;
+        if (a === 'closeq') closeQuarter(q, false);
+        else if (a === 'reopenq') openReason({ title: 'Reabrir ' + q, ok: 'Sí, reabrir el trimestre', ph: 'ej. falta una factura por apuntar',
+          intro: '<p class="muted small" style="margin:0 0 8px">El trimestre <b>' + esc(q) + '</b> vuelve a quedar abierto y dejará de mostrarse como cerrado. Si ya presentaste los impuestos, avisa a la gestoría. El motivo queda anotado.</p>',
+          call: function (why) { return { action: 'adminReopenQuarter', quarter: q, reason: why }; }, after: function () { reload('Trimestre ' + q + ' reabierto.'); } });
+        else if (a === 'ivoid') {
+          var e = (state.rep.emitidas || []).filter(function (x) { return String(x.id) === b.dataset.id; })[0]; if (!e) return;
+          openReason({ title: 'Anular factura emitida', ok: 'Sí, anular la factura', ph: 'ej. emitida por error',
+            intro: '<p class="muted small" style="margin:0 0 8px"><b>' + esc(e.client) + '</b> · nº ' + esc(e.number) + ' · ' + esc(e.date) + ' · ' + fmt(e.total) + ' €</p><p class="muted small">La factura queda <b>anulada</b> y deja de contar en el IVA repercutido de ' + esc(e.quarter) + '. No se borra; queda anotada con tu motivo.</p>',
+            call: function (why) { return { action: 'adminIssuedVoid', id: e.id, reason: why }; }, after: function () { reload('Factura anulada.'); } });
+        }
+      });
+    });
     $('eGo').addEventListener('click', function () {
       var base = num($('eBase').value); if (isNaN(base) || base <= 0) { msg('eMsg', 'Escribe la base imponible.', false); return; }
       var f = $('eFile').files[0], data = { date: $('eDate').value, number: $('eNum').value.trim(), client: $('eCli').value.trim(), nif: $('eNif').value.trim(), base: base, ivaRate: $('eRate').value, notes: $('eNote').value.trim(), credit: $('eCredit').checked };
@@ -328,12 +487,42 @@
       api({ action: 'adminExport', from: $('xFrom').value, to: $('xTo').value }).then(function (res) {
         busy(false);
         if (!res || !res.ok) { msg('xMsg', (res && res.error) || 'No se pudo exportar', false); return; }
-        $('xMsg').className = 'msg good'; $('xMsg').innerHTML = 'Hecho: ' + res.recibidas + ' recibidas y ' + res.emitidas + ' emitidas. <a target="_blank" rel="noopener" style="color:var(--brand-light)" href="' + esc(res.url) + '">Abrir la hoja</a>';
+        $('xMsg').className = 'msg good'; $('xMsg').innerHTML = 'Hecho: ' + esc(res.recibidas) + ' recibidas y ' + esc(res.emitidas) + ' emitidas. <a target="_blank" rel="noopener" style="color:var(--brand-light)" href="' + esc(res.url) + '">Abrir la hoja</a>';
       });
     });
   }
 
   /* ---------- pestaña Más ---------- */
+  /* Aprobación automática (apagada por defecto): solo tickets pequeños de conceptos rutinarios. */
+  var AUTO_EXCL = ['Honorarios profesionales', 'Media/Filmaker', 'Social media'];
+  function autoConcepts() { return ((state.rep.meta && state.rep.meta.concepts) || []).filter(function (c) { return AUTO_EXCL.indexOf(c) < 0; }); }
+  function autoHtml() {
+    var a = state.rep.autoApprove || { enabled: false, maxAmount: 30, concepts: [], sampleEvery: 5 }, cs = autoConcepts();
+    return '<div class="sec"><span>Aprobación automática</span><span id="aaState" class="pill ' + (a.enabled ? 'rev' : '') + '">' + (a.enabled ? 'Activada' : 'Apagada') + '</span></div>'
+      + '<div class="acard"><p class="muted small" style="margin:0 0 8px">Solo para <b>tickets pequeños</b> de los conceptos que marques. Se anotan como «Revisado · Auto». Aun así, <b>1 de cada N</b> se deja para revisión manual. Puedes apagarla cuando quieras.</p>'
+      + (state.rep.autoApprove ? '' : '<p class="muted small" style="margin:0 0 8px">Esta función necesita la versión nueva del servidor.</p>')
+      + '<label class="check" style="margin-top:0"><input id="aaOn" type="checkbox"' + (a.enabled ? ' checked' : '') + '> Aprobar automáticamente</label>'
+      + '<div class="frm"><div class="row"><label class="fl">Importe máximo (€)<input id="aaMax" type="text" inputmode="decimal" value="' + esc(String(a.maxAmount).replace('.', ',')) + '"></label><label class="fl">Revisar a mano 1 de cada…<input id="aaN" type="text" inputmode="numeric" value="' + esc(a.sampleEvery) + '"></label></div>'
+      + '<div class="fl">Conceptos que se aprueban solos</div><div class="aaList">' + cs.map(function (c, i) { return '<label class="check"><input type="checkbox" data-aac="' + esc(c) + '"' + ((a.concepts || []).indexOf(c) >= 0 ? ' checked' : '') + '> ' + esc(c) + '</label>'; }).join('') + '</div>'
+      + '<button id="aaSave" class="abtn go" type="button">Guardar</button><div id="aaMsg" class="msg"></div></div></div>';
+  }
+  function wireAuto() {
+    $('aaSave').addEventListener('click', function () {
+      var was = state.rep.autoApprove && state.rep.autoApprove.enabled, on = $('aaOn').checked, mx = num($('aaMax').value), n = num($('aaN').value);
+      var cs = Array.prototype.filter.call($('tab-mas').querySelectorAll('[data-aac]'), function (i) { return i.checked; }).map(function (i) { return i.dataset.aac; });
+      if ($('aaMax').value.trim() === '' || isNaN(mx) || mx <= 0 || mx > 200) { msg('aaMsg', 'El importe máximo debe estar entre 0,01 y 200 €.', false); return; }
+      if (isNaN(n) || n !== Math.floor(n) || n < 2 || n > 50) { msg('aaMsg', 'Revisar a mano 1 de cada…: escribe un número entero entre 2 y 50.', false); return; }
+      if (on && !cs.length) { msg('aaMsg', 'Marca al menos un concepto.', false); return; }
+      if (on && !was && !window.confirm('Vas a activar la aprobación automática: los tickets de hasta ' + fmt(mx) + ' € de los conceptos marcados se aprobarán solos (salvo 1 de cada ' + n + '). ¿Activarla?')) return;
+      busy(true, 'Guardando…'); touch();
+      api({ action: 'adminSetAutoApprove', enabled: on, maxAmount: mx, concepts: cs, sampleEvery: n }).then(function (res) {
+        busy(false);
+        if (!res || !res.ok) { msg('aaMsg', srvErr(res, 'No se pudo guardar'), false); return; }
+        state.rep.autoApprove = res.autoApprove; var st = $('aaState'); st.textContent = res.autoApprove.enabled ? 'Activada' : 'Apagada'; st.className = 'pill' + (res.autoApprove.enabled ? ' rev' : '');
+        msg('aaMsg', res.autoApprove.enabled ? 'Guardado. La aprobación automática está activada.' : 'Guardado. La aprobación automática está apagada.', true);
+      });
+    });
+  }
   function renderMas() {
     var r = state.rep, c = r.control || {}, team = r.team || [];
     $('tab-mas').innerHTML = '<div class="sec"><span>Estado del sistema</span></div>'
@@ -341,6 +530,7 @@
       + '<div class="qrow"><span>Control de archivos</span><span class="n">' + esc(c.detail || '—') + '</span><span></span></div>'
       + '<div class="qrow"><span>Gastos en el registro</span><span class="n">' + esc(r.registroRows) + '</span><span></span></div>'
       + '<div class="qrow"><span>Último control</span><span class="n">' + esc(c.at || '—') + '</span><span></span></div></div>'
+      + autoHtml()
       + '<div class="sec"><span>Avisos y copias por correo</span></div>'
       + '<div class="acard"><p class="muted small" style="margin:0 0 8px"><b>Aviso de pendientes:</b> te llega los lunes si hay gastos por revisar, y cada 2 días si se acumulan 10 o más.<br><b>Copia por correo:</b> el día 1 de cada mes, con todos los datos en archivos que abre Excel. Guárdala en tu ordenador.</p>'
       + '<div class="acts"><button id="mDigest" class="abtn link" type="button">Enviarme ahora el aviso</button><button id="mBackup" class="abtn link" type="button">Enviarme ahora la copia</button></div><div id="mMsg" class="msg"></div></div>'
@@ -351,6 +541,7 @@
       + '<p class="muted small">La clave de esta pantalla se guarda solo en este navegador mientras la sesión está abierta (o en el dispositivo, si marcaste «recordar»). La sesión se cierra tras 20 minutos sin usarla.</p>'
       + '<button id="refresh" class="btn" type="button">Actualizar datos</button>';
     $('refresh').addEventListener('click', function () { state.hist = null; reload('Datos actualizados'); });
+    wireAuto();
     function mail(btn, action, label) {
       $(btn).addEventListener('click', function () {
         busy(true, 'Enviando…'); touch();
@@ -382,40 +573,116 @@
       R('A3', 'Alberto Barroso', '2026-11-20', LT, 'Diésel', 'Repsol', 58.3, 'Pendiente', ''),
       R('A4', 'Luis Pérez', '2026-11-25', ME, 'Material/Recambios', 'Bike Center', 312.9, 'Pendiente', '', { docType: 'Factura completa', docNumber: 'B-77', nif: 'B19790278', inClub: 'Sí' }),
       R('B1', 'Alberto Barroso', '2026-11-05', LT, 'Diésel', 'Repsol', 14, 'Pendiente', 'Revisado'),
+      R('B2', 'Alberto Barroso', '2026-11-06', LT, 'Peajes/Parking', 'Parking Centro', 6.2, 'Pendiente', 'Revisado', { reviewNote: '2026-11-06 · Auto' }),
       R('I1', 'Alberto Barroso', '2026-11-15', ME, 'Material/Recambios', 'Decathlon', 89.9, 'Pendiente', 'Incidencia', { reviewNote: '2026-11-26 · falta el NIF' }),
       R('L1', 'Alberto Barroso', '2026-11-03', LT, 'Peajes/Parking', 'Autopista AP-7', 9.8, 'Liquidado', 'Revisado', { paidOn: '2026-11-20' }),
       R('L2', 'Luis Pérez', '2026-11-04', ME, 'Comida', 'Restaurante Mar', 27.5, 'Liquidado', 'Revisado', { paidOn: '2026-11-20' }),
       R('V1', 'Luis Pérez', '2026-11-06', ME, 'Comida', 'Restaurante Mar', 27.5, 'Anulado', 'Revisado', { voidNote: '2026-11-07 · duplicado' }),
-      R('T1', 'Tarjeta empresa', '2026-11-08', 'Gastos generales del equipo (sin evento)', 'Gestoría/Bancos', 'Gestoría López', 121, 'No aplica', 'Revisado', { docType: 'Factura completa', docNumber: '88', nif: 'B19790278', inClub: 'Sí' })], paid: [] };
+      R('T1', 'Tarjeta empresa', '2026-11-08', 'Gastos generales del equipo (sin evento)', 'Gestoría/Bancos', 'Gestoría López', 121, 'No aplica', 'Revisado', { docType: 'Factura completa', docNumber: '88', nif: 'B19790278', inClub: 'Sí' })], paid: [],
+      carry: { from: '2026-T4', amount: 334.27, status: 'provisional', note: 'Pendiente de presentar el 4T de 2026', at: '2026-11-20 10:00' },
+      emitidas: [{ id: 'E1', date: '2027-01-15', number: '2027-001', client: 'Ayuntamiento de Morón', base: 800, iva: 168, total: 968, quarter: '2027-T1' }, { id: 'E2', date: '2027-04-10', number: '2027-002', client: 'Bicicletas Sol S.L.', base: 400, iva: 84, total: 484, quarter: '2027-T2' }],
+      closed: { '2027-T1': { at: '2027-04-20 09:30' } },
+      auto: { enabled: false, maxAmount: 30, concepts: ['Diésel', 'Peajes/Parking', 'Comida'], sampleEvery: 5 } };
     var ok = function (o) { return Promise.resolve(Object.assign({ ok: true }, o)); }, bad = function (e) { return Promise.resolve({ ok: false, error: e }); };
     var rows = mock.rows, find = function (id) { return rows.filter(function (x) { return x.id === id; })[0]; };
+    var stamp = function () { var d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString(); return d.slice(0, 10) + ' ' + d.slice(11, 16); };
+    var QV = { '2027-T1': { late: { ivaRep: 0, ivaSop: 12.5, irpf: 0 } } };
+    function qChecks(q) { // trimestre T2 de ejemplo = los gastos de la demo (con bloqueos); el resto, limpio
+      var rr = q === '2027-T2' ? rows.filter(function (i) { return i.status !== 'Anulado'; }) : [];
+      return [{ key: 'sinRevisar', label: 'Gastos por revisar', n: rr.filter(function (i) { return !i.review; }).length, blocks: true },
+        { key: 'incidencias', label: 'Gastos con incidencia sin resolver', n: rr.filter(function (i) { return i.review === 'Incidencia'; }).length, blocks: true },
+        { key: 'sinIva', label: 'Gastos sin tipo de IVA', n: 0, blocks: false }, { key: 'sinNif', label: 'Facturas completas sin NIF', n: 0, blocks: true },
+        { key: 'noTermina', label: 'El trimestre aún no ha terminado', n: 1, blocks: false }];
+    }
     if (b.action === 'adminReport') {
-      var pend = {};
-      rows.filter(function (i) { return i.status === 'Pendiente'; }).forEach(function (i) { var p = pend[i.person] = pend[i.person] || { person: i.person, total: 0, count: 0, items: [] }; p.items.push(Object.assign({}, i)); p.total += i.net; });
+      var pend = {}, dl = new Date(Date.now() + 12 * 86400000), dls = new Date(dl.getTime() - dl.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      rows.filter(function (i) { return i.status === 'Pendiente'; }).forEach(function (i) { var p = pend[i.person] = pend[i.person] || { person: i.person, total: 0, count: 0, items: [] }; p.items.push(Object.assign({}, i)); p.total += i.net; p.count++; });
+      var emi = mock.emitidas.filter(function (e) { return !e.voided; }), isum = function (q, k) { return emi.filter(function (e) { return e.quarter === q; }).reduce(function (a, e) { return a + e[k]; }, 0); };
+      var imp = [{ quarter: '2027-T1', ivaRep: isum('2027-T1', 'iva'), ivaSop: 61.2, irpf: 0, ivaPaid: 0, irpfPaid: 0, facturasEmitidas: emi.filter(function (e) { return e.quarter === '2027-T1'; }).length, carryIn: mock.carry ? mock.carry.amount : 0, carryOut: 334.27, ivaToPay: 0, ivaPending: 0, irpfPending: 0 },
+        { quarter: '2027-T2', ivaRep: isum('2027-T2', 'iva'), ivaSop: 120, irpf: 40, ivaPaid: 0, irpfPaid: 0, facturasEmitidas: emi.filter(function (e) { return e.quarter === '2027-T2'; }).length, carryIn: 334.27, carryOut: 334.27, ivaToPay: 0, ivaPending: 0, irpfPending: 40 },
+        { quarter: '2027-T3', ivaRep: 50, ivaSop: 10, irpf: 0, ivaPaid: 0, irpfPaid: 0, facturasEmitidas: 1, carryIn: 334.27, carryOut: 294.27, ivaToPay: 0, ivaPending: 0, irpfPending: 0 }];
+      imp.forEach(function (x) { var c = mock.closed[x.quarter]; if (c) { x.closed = c.at; x.late = (QV[x.quarter] || { late: { ivaRep: 0, ivaSop: 0, irpf: 0 } }).late; } });
       return ok({ porRevisar: rows.filter(function (i) { return !i.review && i.status !== 'Anulado'; }).map(function (i) { return Object.assign({}, i); }), meta: META,
         team: ['José María Sánchez', 'Alberto Barroso', 'Luis Pérez Martínez', 'Diego del Valle'].map(function (n) { return { name: n, email: mock.team[n] || '' }; }),
-        pending: Object.keys(pend).map(function (k) { return pend[k]; }), registroRows: rows.length, control: { backup: 'OK', detail: 'Todo correcto', at: '27/11/2026 3:50' }, ivaCarry: { from: '2026-T4', amount: 334.27, status: 'provisional' },
-        impuestos: [{ quarter: '2027-T1', ivaRep: 0, ivaSop: 0, irpf: 0, ivaPaid: 0, irpfPaid: 0, facturasEmitidas: 0, carryIn: 334.27, carryOut: 334.27, ivaToPay: 0, ivaPending: 0, irpfPending: 0 }], impuestos2026T4: { ivaSop: 261.89, irpf: 0 }, emitidas: [], pagos: [] });
+        pending: Object.keys(pend).map(function (k) { return pend[k]; }), registroRows: rows.length, control: { backup: 'OK', detail: 'Todo correcto', at: '27/11/2026 3:50' },
+        warnings: ['Hay 4 gastos con más de 7 días sin revisar.', 'El saldo de IVA a favor de 2026 sigue como provisional.'],
+        nextDeadline: { date: dls, title: 'IVA e IRPF del 4T de 2026', days: 12 },
+        autoApprove: Object.assign({}, mock.auto, { concepts: mock.auto.concepts.slice() }),
+        ivaCarry: mock.carry ? Object.assign({}, mock.carry) : null,
+        impuestos: imp, impuestos2026T4: { ivaSop: 261.89, irpf: 0 }, emitidas: emi.map(function (e) { return Object.assign({}, e); }), pagos: [] });
     }
     if (b.action === 'adminHistory') return ok({ total: rows.length, items: rows.slice().sort(function (a, c) { return a.date < c.date ? 1 : -1; }).map(function (i) { return Object.assign({}, i); }) });
-    if (b.action === 'adminReview') { b.ids.forEach(function (id) { var i = find(id); if (i) { i.review = b.status; i.reviewNote = b.note || ''; } }); return ok({ n: b.ids.length }); }
+    if (b.action === 'adminReview') {
+      var nf = [], n = 0; b.ids.forEach(function (id) { var i = find(id); if (i) { i.review = b.status; i.reviewNote = b.note || ''; n++; } else nf.push(id); });
+      return ok({ n: n, noEncontrados: nf });
+    }
     if (b.action === 'liquidate') { b.ids.forEach(function (id) { var i = find(id); if (i) { i.status = 'Liquidado'; i.paidOn = today(); } }); return ok({ person: b.person, n: b.ids.length, total: b.expectedTotal }); }
+    if (b.action === 'adminVoid') {
+      var v = find(b.id); if (!v) return bad('No existe el gasto ' + b.id);
+      if (!String(b.reason || '').trim()) return bad('Indica el motivo');
+      if (v.status === 'Liquidado') return bad('Ya está liquidado: deshaz antes la liquidación (unliquidate)');
+      if (v.status === 'Anulado') return bad('Ya estaba anulado');
+      v.status = 'Anulado'; v.voidNote = today() + ' · ' + b.reason; return ok({ id: v.id });
+    }
+    if (b.action === 'unliquidate') {
+      if (!String(b.reason || '').trim()) return bad('Indica el motivo');
+      if (!b.ids || !b.ids.length) return bad('Faltan los ids');
+      var tot = 0, k = 0, err = '';
+      b.ids.forEach(function (id) { var i = find(id); if (!i) err = 'No se han encontrado todos los gastos'; else if (i.person !== b.person) err = 'El gasto ' + id + ' no es de ' + b.person; else if (i.status !== 'Liquidado') err = 'El gasto ' + id + ' no está liquidado (' + i.status + ')'; });
+      if (err) return bad(err);
+      b.ids.forEach(function (id) { var i = find(id); i.status = 'Pendiente'; i.paidOn = ''; k++; tot += i.net; });
+      return ok({ person: b.person, n: k, total: Math.round(tot * 100) / 100 });
+    }
     if (b.action === 'adminCorrect') {
       var o = find(b.id); if (!o) return bad('No existe el gasto ' + b.id);
       if (!String(b.reason || '').trim()) return bad('Indica el motivo de la corrección');
       if (o.status === 'Liquidado' || o.status === 'Anulado') return bad('Ya está liquidado o anulado');
-      var ch = b.changes || {}, n = Object.assign({}, o, { id: 'C' + (++mock.seq), review: '', reviewNote: '', origin: 'Corrección', notes: ((o.notes ? o.notes + ' · ' : '') + 'Corrige a ' + o.id) });
-      ['concept', 'date', 'amount', 'supplier', 'docNumber', 'nif', 'docType', 'ivaRate', 'inClub', 'irpfRate'].forEach(function (k) { if (ch[k] != null) n[k] = ch[k]; });
-      if (ch.notes != null) n.notes = ch.notes;
-      if (ch.eventId) { var e = META.events.filter(function (x) { return x.id === ch.eventId; })[0]; n.eventId = ch.eventId; n.event = e ? e.label : n.event; }
-      n.net = n.amount; o.status = 'Anulado'; o.voidNote = today() + ' · corregido por ' + n.id + ' · ' + b.reason; rows.push(n);
-      return ok({ oldId: o.id, newId: n.id });
+      var ch = b.changes || {}, n2 = Object.assign({}, o, { id: 'C' + (++mock.seq), review: '', reviewNote: '', origin: 'Corrección', notes: ((o.notes ? o.notes + ' · ' : '') + 'Corrige a ' + o.id) });
+      ['concept', 'date', 'amount', 'supplier', 'docNumber', 'nif', 'docType', 'ivaRate', 'inClub', 'irpfRate'].forEach(function (k) { if (ch[k] != null) n2[k] = ch[k]; });
+      if (ch.notes != null) n2.notes = ch.notes;
+      if (ch.eventId) { var e = META.events.filter(function (x) { return x.id === ch.eventId; })[0]; n2.eventId = ch.eventId; n2.event = e ? e.label : n2.event; }
+      n2.net = n2.amount; o.status = 'Anulado'; o.voidNote = today() + ' · corregido por ' + n2.id + ' · ' + b.reason; rows.push(n2);
+      return ok({ oldId: o.id, newId: n2.id });
+    }
+    if (b.action === 'adminSetCarry') {
+      var am = Math.round(Number(b.amount) * 100) / 100;
+      if (isNaN(am) || am < 0 || am > 1000000) return bad('Importe no válido');
+      if (['provisional', 'definitivo'].indexOf(b.status) < 0) return bad('Estado: provisional o definitivo');
+      mock.carry = { from: b.from || '2026-T4', amount: am, status: b.status, note: b.note || '', at: stamp() }; return ok({ carry: mock.carry });
+    }
+    if (b.action === 'adminIssuedVoid') {
+      var em = mock.emitidas.filter(function (e) { return e.id === b.id; })[0];
+      if (!b.id || !String(b.reason || '').trim()) return bad('Faltan el id y el motivo');
+      if (!em || em.voided) return bad('No existe esa factura emitida');
+      em.voided = true; return ok({ id: em.id });
+    }
+    if (b.action === 'adminCloseQuarter') {
+      var q = String(b.quarter || ''); if (QUARTERS.indexOf(q) < 1) return bad('Trimestre no válido (de 2027-T1 en adelante)');
+      if (mock.closed[q]) return bad('Ese trimestre ya está cerrado (' + mock.closed[q].at + ')');
+      var cks = qChecks(q), blk = cks.filter(function (c) { return c.blocks && c.n > 0; });
+      if (blk.length && !b.force) return Promise.resolve({ ok: false, error: 'No se puede cerrar: ' + blk.map(function (c) { return c.label + ' (' + c.n + ')'; }).join(', '), checks: cks, blockers: true });
+      mock.closed[q] = { at: stamp() }; return ok({ quarter: q, snapshot: { ivaRep: 0, ivaSop: 0, irpf: 0, docs: 0, ivaToPay: 0 }, checks: cks });
+    }
+    if (b.action === 'adminReopenQuarter') {
+      if (!String(b.reason || '').trim()) return bad('Indica el motivo');
+      if (!mock.closed[b.quarter]) return bad('Ese trimestre no está cerrado');
+      delete mock.closed[b.quarter]; return ok({ quarter: b.quarter });
+    }
+    if (b.action === 'adminSetAutoApprove') {
+      var mx = Math.round(Number(b.maxAmount) * 100) / 100, ne = Math.floor(Number(b.sampleEvery)), cs = (b.concepts || []).filter(function (x) { return META.concepts.indexOf(x) >= 0 && ['Honorarios profesionales', 'Media/Filmaker', 'Social media'].indexOf(x) < 0; });
+      if (!(mx > 0 && mx <= 200)) return bad('El importe máximo debe estar entre 0,01 y 200 €');
+      if (!(ne >= 2 && ne <= 50)) return bad('La muestra debe ser 1 de cada 2 a 50');
+      if (b.enabled === true && !cs.length) return bad('Elige al menos un concepto');
+      mock.auto = { enabled: b.enabled === true, maxAmount: mx, concepts: cs, sampleEvery: ne }; return ok({ autoApprove: Object.assign({}, mock.auto) });
     }
     if (b.action === 'adminSetTeamEmails') { Object.keys(b.emails || {}).forEach(function (k) { if (b.emails[k]) mock.team[k] = b.emails[k]; else delete mock.team[k]; }); return ok({ n: Object.keys(mock.team).length, team: Object.keys(b.emails || {}).map(function (k) { return { name: k, email: mock.team[k] || '' }; }) }); }
     if (b.action === 'adminDigestTest') return ok({ result: 'aviso enviado (' + rows.filter(function (i) { return !i.review && i.status !== 'Anulado'; }).length + ' pendientes)' });
     if (b.action === 'adminBackupMailNow') return ok({ result: 'enviada (8 pestañas)' });
     if (b.action === 'adminTaxPaid') return ok({});
-    if (b.action === 'adminIssuedAdd') return ok({ iva: Math.round(b.data.base * 21) / 100, quarter: '2027-T1' });
+    if (b.action === 'adminIssuedAdd') {
+      var iva = Math.round(b.data.base * 21) / 100; mock.emitidas.push({ id: 'E' + (3 + mock.seq++), date: b.data.date, number: b.data.number, client: b.data.client, base: b.data.base, iva: iva, total: b.data.base + iva, quarter: '2027-T1' });
+      return ok({ iva: iva, quarter: '2027-T1' });
+    }
     if (b.action === 'adminExport') return ok({ url: '#', recibidas: 2, emitidas: 0 });
     return ok({});
   }

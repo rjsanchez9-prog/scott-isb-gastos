@@ -1,5 +1,5 @@
 /* Service worker: deja la app disponible sin cobertura (carga la web desde el móvil y se actualiza en segundo plano). */
-var CACHE = 'gx-v16';
+var CACHE = 'gx-v17';
 var ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.webmanifest',
   'assets/logo-blanco.png', 'assets/icon-180.png', 'assets/icon-192.png', 'assets/icon-512.png'];
 

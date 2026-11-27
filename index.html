@@ -63,6 +63,7 @@
         <div class="card">
           <div class="step"><span class="num">2</span><label for="event">Evento</label></div>
           <select id="event" required></select>
+          <p id="eventHint" class="muted small" hidden style="margin:8px 0 0">Último evento que usaste: cámbialo si no es el de este gasto.</p>
         </div>
 
         <div class="card">
@@ -105,7 +106,7 @@
                 <option value="multi">Varios tipos (supermercado…)</option>
               </select>
             </div>
-            <div class="col">
+            <div class="col" id="inClubBox">
               <span class="sub">¿A nombre del club?</span>
               <select id="inClub" required>
                 <option value="">Elige…</option>
@@ -114,6 +115,8 @@
               </select>
             </div>
           </div>
+          <p id="ivaSuggest" class="muted small" hidden></p>
+          <p id="inClubTicket" class="muted small" hidden>Un ticket no va a nombre del club.</p>
           <p id="ivaCalc" class="muted small" hidden></p>
           <div id="ivaMulti" hidden>
             <p class="muted small" style="margin-top:10px">Copia del ticket o factura el <b>desglose de IVA</b>: la base y la cuota de cada tipo. Deja en blanco los tipos que no aparezcan.</p>
@@ -134,11 +137,12 @@
               <option value="other">Otro porcentaje…</option>
             </select>
             <input id="irpfOther" type="text" inputmode="decimal" autocomplete="off" placeholder="% que figura en la factura (ej. 1,5)" hidden style="margin-top:8px">
-            <p class="muted small" style="margin-top:6px">Pon el porcentaje que indique la factura del profesional.</p>
+            <p id="irpfHelp" class="muted small" style="margin-top:6px">Pon el porcentaje que indique la factura del profesional.</p>
             <p id="irpfCalc" class="muted small" hidden></p>
+            <p id="irpfWarn" class="warn" hidden>Con retención de IRPF hace falta una factura completa: un ticket no sirve.</p>
             <p id="irpfNote" class="muted small" hidden>Tus honorarios se imputan a tu partida anual, no a un evento.</p>
           </div>
-          <p class="muted small">Míralo en la factura: debe figurar <b>C.D. Probikes Morón</b> como cliente. Si es un ticket sin nombre, elige <b>No</b>.</p>
+          <p id="inClubHelp" class="muted small">Míralo en la factura: debe figurar <b>C.D. Probikes Morón</b> como cliente. Si es un ticket sin nombre, elige <b>No</b>.</p>
         </div>
 
         <div class="card">
@@ -189,6 +193,7 @@
         <h1 id="doneTitle">Gasto guardado</h1>
         <p id="doneSummary" class="muted"></p>
         <p id="doneNote" class="note" hidden></p>
+        <p id="doneAuto" class="note" hidden>Aprobado automáticamente (gasto pequeño)</p>
         <button id="againBtn" class="btn primary" type="button">Subir otro gasto</button>
       </div>
     </section>
