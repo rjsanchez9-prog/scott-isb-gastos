@@ -45,6 +45,7 @@
   function touch() { clearTimeout(state.idle); state.idle = setTimeout(function () { logout('Sesión cerrada por inactividad.'); }, 20 * 60 * 1000); }
   function logout(msg) {
     state.key = ''; state.rep = null; state.hist = null; state.rf = newF(); state.hf = newF(); closeFix(); try { sessionStorage.removeItem('ga.k'); localStorage.removeItem('ga.k'); } catch (e) {}
+    var aik = $('aiKey'); if (aik) aik.value = '';
     $('appView').hidden = true; $('tabs').hidden = true; $('logout').hidden = true; $('loginView').hidden = false; $('key').value = '';
     if (msg) { $('loginError').textContent = msg; $('loginError').hidden = false; }
   }
@@ -142,6 +143,8 @@
       + (nd && nd.title ? '<div class="hrow plazo"><span>Próximo plazo: <b>' + esc(nd.title) + '</b>' + (ddmm(nd.date) ? ' · ' + esc(ddmm(nd.date)) : '') + (nd.days != null ? ' (' + esc(daysText(nd.days)) + ')' : '') + '</span></div>' : '')
       + '</div>';
     (r.warnings || []).forEach(function (w) { h += '<div class="note warn">' + esc(w) + '</div>'; });
+    var ai = r.ai; /* la IA es opcional: sin clave no se dice nada */
+    if (ai && ai.hasKey && ai.enabled && Number(ai.dailyMax) > 0 && Number(ai.usedToday) >= 0.8 * Number(ai.dailyMax)) h += '<div class="note warn">Hoy llevas ' + esc(Number(ai.usedToday)) + ' de ' + esc(Number(ai.dailyMax)) + ' lecturas automáticas</div>';
     return h;
   }
   function revFiltered() { return (state.rep.porRevisar || []).filter(function (x) { return filtMatch(state.rf, x); }); }
@@ -523,6 +526,68 @@
       });
     });
   }
+  /* Lectura de papeles con IA: la clave se guarda solo en el servidor y nunca vuelve a la web. */
+  function aiOf() { return Object.assign({ hasKey: false, enabled: false, model: '', dailyMax: 50, usedToday: 0 }, state.rep && state.rep.ai || {}); }
+  /** Quita de un texto cualquier cosa que parezca una clave, por si el servidor la repitiera en un error. */
+  function aiErr(res, def) { return String(srvErr(res, def)).replace(/sk-ant-\S*/gi, '…'); }
+  function aiHtml() {
+    return '<div class="sec"><span>Lectura de papeles con IA</span><span id="aiState" class="pill"></span></div>'
+      + '<div class="acard"><div id="aiStat" class="sub2" style="margin:0 0 8px"></div>'
+      + (state.rep.ai ? '' : '<p class="muted small" style="margin:0 0 8px">Esta función necesita la versión nueva del servidor.</p>')
+      + '<p class="muted small" style="margin:0 0 8px">La foto del papel se envía a Anthropic para leerla y rellenar el formulario del equipo. Cuesta unos céntimos por papel. La clave se guarda solo en el servidor y no se vuelve a mostrar.</p>'
+      + '<div class="frm"><label class="fl">Clave de la IA<input id="aiKey" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-…"></label>'
+      + '<div class="acts" style="margin-top:0"><button id="aiKeySave" class="abtn go" type="button">Guardar clave</button></div><div id="aiKeyMsg" class="msg" style="margin-top:0"></div></div>'
+      + '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)"><p id="aiNoKey" class="muted small" style="margin:0 0 8px" hidden>Primero guarda la clave de la IA para poder activar la lectura.</p>'
+      + '<label class="check" style="margin-top:0"><input id="aiOn" type="checkbox"> Lectura automática</label>'
+      + '<div class="frm"><label class="fl">Tope diario de lecturas<input id="aiMax" type="text" inputmode="numeric" autocomplete="off" placeholder="1 a 1000"></label>'
+      + '<div class="acts" style="margin-top:0"><button id="aiCfgSave" class="abtn go" type="button">Guardar</button><button id="aiTest" class="abtn link" type="button">Probar conexión</button></div>'
+      + '<div id="aiCfgMsg" class="msg" style="margin-top:0"></div><div id="aiTestMsg" class="msg" style="margin-top:0"></div></div></div></div>';
+  }
+  /** Pone al día estado, botones y bloqueos. fields = también reescribe el interruptor y el tope (no al guardar la clave, para no pisar lo que se esté editando). */
+  function aiPaint(fields) {
+    var a = aiOf(), st = $('aiState'), key = a.hasKey;
+    st.textContent = !key ? 'Falta la clave' : (a.enabled ? 'Activada' : 'Apagada'); st.className = 'pill' + (!key ? ' pend' : (a.enabled ? ' rev' : ''));
+    $('aiStat').textContent = (a.model ? 'Modelo: ' + a.model + ' · ' : '') + 'Hoy: ' + (Number(a.usedToday) || 0) + ' de ' + (Number(a.dailyMax) || 0) + ' lecturas';
+    $('aiKeySave').textContent = key ? 'Cambiar clave' : 'Guardar clave';
+    $('aiNoKey').hidden = key;
+    ['aiOn', 'aiMax', 'aiCfgSave', 'aiTest'].forEach(function (id) { $(id).disabled = !key; });
+    if (fields) { $('aiOn').checked = !!a.enabled && key; $('aiMax').value = String(a.dailyMax); }
+  }
+  function wireAi() {
+    aiPaint(true);
+    $('aiKeySave').addEventListener('click', function () {
+      var inp = $('aiKey'), k = inp.value.trim();
+      if (!k) { msg('aiKeyMsg', 'Pega la clave de la IA.', false); return; }
+      if (!/^sk-ant-\S{12,}$/.test(k)) { msg('aiKeyMsg', 'La clave no parece válida: debe empezar por «sk-ant-» y no llevar espacios.', false); return; }
+      var body = { action: 'adminSetAiKey', key: k }; k = '';
+      busy(true, 'Guardando la clave…'); touch();
+      api(body).then(function (res) {
+        body.key = ''; busy(false);
+        if (!res || !res.ok) { msg('aiKeyMsg', aiErr(res, 'No se pudo guardar la clave'), false); return; }
+        inp.value = ''; state.rep.ai = res.ai || Object.assign({}, aiOf(), { hasKey: true });
+        aiPaint(false); renderRev(); msg('aiKeyMsg', 'Clave guardada', true);
+      });
+    });
+    $('aiCfgSave').addEventListener('click', function () {
+      var raw = $('aiMax').value.trim(), on = $('aiOn').checked;
+      if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > 1000) { msg('aiCfgMsg', 'El tope diario debe ser un número entero entre 1 y 1000.', false); return; }
+      busy(true, 'Guardando…'); touch();
+      api({ action: 'adminAiConfig', enabled: on, dailyMax: Number(raw) }).then(function (res) {
+        busy(false);
+        if (!res || !res.ok) { msg('aiCfgMsg', aiErr(res, 'No se pudo guardar'), false); return; }
+        state.rep.ai = res.ai || Object.assign({}, aiOf(), { enabled: on, dailyMax: Number(raw) });
+        aiPaint(true); renderRev(); msg('aiCfgMsg', aiOf().enabled ? 'Guardado. La lectura automática está activada.' : 'Guardado. La lectura automática está apagada.', true);
+      });
+    });
+    $('aiTest').addEventListener('click', function () {
+      $('aiTestMsg').textContent = ''; busy(true, 'Probando la conexión…'); touch();
+      api({ action: 'adminAiTest' }).then(function (res) {
+        busy(false);
+        if (!res || !res.ok) { msg('aiTestMsg', aiErr(res, 'No se pudo conectar con la IA'), false); return; }
+        msg('aiTestMsg', 'Conectado · modelo ' + String(res.model || '—') + ' · ' + String(res.ms != null ? res.ms : '—') + ' ms', true);
+      });
+    });
+  }
   function renderMas() {
     var r = state.rep, c = r.control || {}, team = r.team || [];
     $('tab-mas').innerHTML = '<div class="sec"><span>Estado del sistema</span></div>'
@@ -531,6 +596,7 @@
       + '<div class="qrow"><span>Gastos en el registro</span><span class="n">' + esc(r.registroRows) + '</span><span></span></div>'
       + '<div class="qrow"><span>Último control</span><span class="n">' + esc(c.at || '—') + '</span><span></span></div></div>'
       + autoHtml()
+      + '<div id="aiBox">' + aiHtml() + '</div>'
       + '<div class="sec"><span>Avisos y copias por correo</span></div>'
       + '<div class="acard"><p class="muted small" style="margin:0 0 8px"><b>Aviso de pendientes:</b> te llega los lunes si hay gastos por revisar, y cada 2 días si se acumulan 10 o más.<br><b>Copia por correo:</b> el día 1 de cada mes, con todos los datos en archivos que abre Excel. Guárdala en tu ordenador.</p>'
       + '<div class="acts"><button id="mDigest" class="abtn link" type="button">Enviarme ahora el aviso</button><button id="mBackup" class="abtn link" type="button">Enviarme ahora la copia</button></div><div id="mMsg" class="msg"></div></div>'
@@ -541,7 +607,7 @@
       + '<p class="muted small">La clave de esta pantalla se guarda solo en este navegador mientras la sesión está abierta (o en el dispositivo, si marcaste «recordar»). La sesión se cierra tras 20 minutos sin usarla.</p>'
       + '<button id="refresh" class="btn" type="button">Actualizar datos</button>';
     $('refresh').addEventListener('click', function () { state.hist = null; reload('Datos actualizados'); });
-    wireAuto();
+    wireAuto(); wireAi();
     function mail(btn, action, label) {
       $(btn).addEventListener('click', function () {
         busy(true, 'Enviando…'); touch();
@@ -582,7 +648,8 @@
       carry: { from: '2026-T4', amount: 334.27, status: 'provisional', note: 'Pendiente de presentar el 4T de 2026', at: '2026-11-20 10:00' },
       emitidas: [{ id: 'E1', date: '2027-01-15', number: '2027-001', client: 'Ayuntamiento de Morón', base: 800, iva: 168, total: 968, quarter: '2027-T1' }, { id: 'E2', date: '2027-04-10', number: '2027-002', client: 'Bicicletas Sol S.L.', base: 400, iva: 84, total: 484, quarter: '2027-T2' }],
       closed: { '2027-T1': { at: '2027-04-20 09:30' } },
-      auto: { enabled: false, maxAmount: 30, concepts: ['Diésel', 'Peajes/Parking', 'Comida'], sampleEvery: 5 } };
+      auto: { enabled: false, maxAmount: 30, concepts: ['Diésel', 'Peajes/Parking', 'Comida'], sampleEvery: 5 },
+      ai: { hasKey: false, enabled: false, model: 'claude-haiku-4-5', dailyMax: 50, usedToday: 0 } }; /* la clave NUNCA se guarda aquí, solo si existe */
     var ok = function (o) { return Promise.resolve(Object.assign({ ok: true }, o)); }, bad = function (e) { return Promise.resolve({ ok: false, error: e }); };
     var rows = mock.rows, find = function (id) { return rows.filter(function (x) { return x.id === id; })[0]; };
     var stamp = function () { var d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString(); return d.slice(0, 10) + ' ' + d.slice(11, 16); };
@@ -608,6 +675,7 @@
         warnings: ['Hay 4 gastos con más de 7 días sin revisar.', 'El saldo de IVA a favor de 2026 sigue como provisional.'],
         nextDeadline: { date: dls, title: 'IVA e IRPF del 4T de 2026', days: 12 },
         autoApprove: Object.assign({}, mock.auto, { concepts: mock.auto.concepts.slice() }),
+        ai: Object.assign({}, mock.ai, typeof window.__mockAiUsed === 'number' ? { usedToday: window.__mockAiUsed } : {}), /* demo: window.__mockAiUsed = N simula N lecturas hoy */
         ivaCarry: mock.carry ? Object.assign({}, mock.carry) : null,
         impuestos: imp, impuestos2026T4: { ivaSop: 261.89, irpf: 0 }, emitidas: emi.map(function (e) { return Object.assign({}, e); }), pagos: [] });
     }
@@ -674,6 +742,22 @@
       if (!(ne >= 2 && ne <= 50)) return bad('La muestra debe ser 1 de cada 2 a 50');
       if (b.enabled === true && !cs.length) return bad('Elige al menos un concepto');
       mock.auto = { enabled: b.enabled === true, maxAmount: mx, concepts: cs, sampleEvery: ne }; return ok({ autoApprove: Object.assign({}, mock.auto) });
+    }
+    if (b.action === 'adminSetAiKey') {
+      if (!/^sk-ant-[A-Za-z0-9_-]{12,}$/.test(String(b.key || '').trim())) return bad('La clave no tiene el formato esperado (empieza por «sk-ant-»).');
+      mock.ai.hasKey = true; return ok({ ai: Object.assign({}, mock.ai) });
+    }
+    if (b.action === 'adminAiConfig') {
+      var dm = Number(b.dailyMax);
+      if (typeof b.enabled !== 'boolean') return bad('Indica si la lectura está activada o apagada');
+      if (!(dm >= 1 && dm <= 1000 && dm === Math.floor(dm))) return bad('El tope diario debe ser un número entero entre 1 y 1000');
+      if (b.enabled && !mock.ai.hasKey) return bad('Primero guarda la clave de la IA');
+      mock.ai.enabled = b.enabled; mock.ai.dailyMax = dm; return ok({ ai: Object.assign({}, mock.ai) });
+    }
+    if (b.action === 'adminAiTest') {
+      if (!mock.ai.hasKey) return bad('Falta la clave de la IA');
+      if (window.__mockAiFail) return bad('La IA no ha respondido (error 401): revisa la clave');
+      return ok({ model: mock.ai.model, ms: 840 });
     }
     if (b.action === 'adminSetTeamEmails') { Object.keys(b.emails || {}).forEach(function (k) { if (b.emails[k]) mock.team[k] = b.emails[k]; else delete mock.team[k]; }); return ok({ n: Object.keys(mock.team).length, team: Object.keys(b.emails || {}).map(function (k) { return { name: k, email: mock.team[k] || '' }; }) }); }
     if (b.action === 'adminDigestTest') return ok({ result: 'aviso enviado (' + rows.filter(function (i) { return !i.review && i.status !== 'Anulado'; }).length + ' pendientes)' });
